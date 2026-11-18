@@ -1,0 +1,26 @@
+# Builds JaseQoL.zip and uploads it to CurseForge (and a GitHub release)
+# whenever a version tag such as v1.0.0 is pushed.
+#
+# One-time setup on GitHub: Settings > Secrets and variables > Actions >
+#   CF_API_KEY = your CurseForge API token (curseforge.com > account > API tokens)
+# and put "## X-Curse-Project-ID: <your project id>" in JaseQoL.toc.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: BigWigsMods/packager@v2

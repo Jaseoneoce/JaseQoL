@@ -1,0 +1,15 @@
+## Interface: 16001
+## AllowLoadGameType: camelot
+## Title: |cff0cd29fJaseQoL|r
+## Notes: Jase's own tweaks: XP level colours, an EllesmereUI skin and a new view for the Dungeon Journal. Each one can be switched on or off (/jq).
+## Author: jasone
+## Version: @project-version@
+## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, ForeverDungeonJournal
+## SavedVariables: JaseQoLDB
+## IconTexture: Interface\Icons\INV_Misc_Gear_01
+
+Core.lua
+Modules\XPLevelColor.lua
+Modules\DungeonJournalSkin.lua
+Modules\JournalView.lua
+Options.lua
