@@ -14,11 +14,13 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 | **Alt inventory window** | `/jinv`: every item on all your characters on this realm, with search and per-character / bags / bank / mail filters. | Alt tracking |
 | **Send mats to bank alts** | `/jmats`: assign materials to professions (or "Bank"); alts get the categories of the professions they have, and you can switch any on or off per alt. At the mailbox, pick an alt and press **Send mats**: every unbound stack for them is mailed, 12 per mail. Each profession can also **send all BoE gear** (on for Enchanting by default). | Alt tracking |
 | **Warn when selling BoE items** | Selling a Bind on Equip item to a vendor shows a big warning so you can buy it back. For a BoE label on bag slots, use EllesmereUI > Bags > Show BoE / Warbound Text. | |
+| **Mastercraft skin** | Skins Mastercraft in the EllesmereUI style (EUI window frames, neutral panels, your accent, your font) on top of Mastercraft's flat Classic look. Your previous Mastercraft look comes back if you switch it off. | EllesmereUI Blizzard Skins+, Mastercraft |
 
 ## Switching tweaks on and off
 
 - **Game menu → Options → AddOns → JaseQoL**
 - **EllesmereUI options → JaseQoL** (when EllesmereUI is installed)
+- **JaseQoL window → Settings tab** (`/jq`, or right-click the J button): every tweak with an On/Off switch and a tooltip
 - `/jq` opens the options, `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `boeGuard`)
 - `/jdj` opens the new Dungeon Journal view
 

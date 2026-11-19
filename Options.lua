@@ -95,6 +95,7 @@ SLASH_JASEQOL2 = "/jaseqol"
 SlashCmdList.JASEQOL = function(msg)
     msg = strtrim(msg or "")
     if msg == "" then
+        if JQ.OpenSettings then return JQ.OpenSettings() end
         if EllesmereUI and EllesmereUI.OpenPlugin and EllesmereUI.OpenPlugin(PLUGIN_ID) then return end
         local cat = JQ.settingsCategory
         if cat and Settings and Settings.OpenToCategory then
