@@ -74,6 +74,31 @@ local function ItemGoesTo(id, alt)
     return false
 end
 
+-- "Also send all BoE gear" per category (Enchanting on by default):
+-- unbound Bind-on-Equip weapons and armour go to alts receiving that category.
+local GetItemInfoFn = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+local BIND_ON_EQUIP = (Enum and Enum.ItemBind and Enum.ItemBind.OnEquip) or 2
+local GEAR_CLASS = { [2] = true, [4] = true }   -- Weapon, Armor
+
+local function BoEGearOn(cat)
+    local v = db.boeGear[cat]
+    if v == nil then return cat == "Enchanting" end
+    return v
+end
+
+local function IsBoEGear(link)
+    if not link then return false end
+    local _, _, _, _, _, _, _, _, _, _, _, classID, _, bindType = GetItemInfoFn(link)
+    return bindType == BIND_ON_EQUIP and GEAR_CLASS[classID] or false
+end
+
+local function GetsBoEGear(alt)
+    for _, c in ipairs(Categories()) do
+        if BoEGearOn(c) and Receives(alt, c) then return true end
+    end
+    return false
+end
+
 local function Assign(id, cat, on)
     if not id or not cat then return end
     db.mats[id] = db.mats[id] or {}
@@ -84,11 +109,12 @@ end
 -- Stacks in my bags for an alt: { {bag, slot, id, count}, ... } (unbound only).
 local function StacksFor(alt)
     local out = {}
+    local boe = GetsBoEGear(alt)
     for _, bag in ipairs(Alts.BagIDs()) do
         local n = (C and C.GetContainerNumSlots and C.GetContainerNumSlots(bag)) or 0
         for slot = 1, n do
-            local id, count, isBound = Alts.SlotInfo(bag, slot)
-            if id and not isBound and ItemGoesTo(id, alt) then
+            local id, count, isBound, link = Alts.SlotInfo(bag, slot)
+            if id and not isBound and (ItemGoesTo(id, alt) or (boe and IsBoEGear(link))) then
                 out[#out + 1] = { bag = bag, slot = slot, id = id, count = count or 1 }
             end
         end
@@ -456,6 +482,19 @@ local function BuildSetup()
     mid:SetWidth(300)
     setup.midHead = UI.Text(mid, 12)
     setup.midHead:SetPoint("TOPLEFT", 8, -8)
+    setup.boeBtn = UI.Button(mid, "Also send all BoE gear", 150, 20)
+    setup.boeBtn:SetPoint("TOPRIGHT", -6, -5)
+    setup.boeBtn:SetScript("OnClick", function()
+        db.boeGear[setup.cat] = not BoEGearOn(setup.cat)
+        setup:Refresh()
+    end)
+    setup.boeBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Also send all BoE gear", 1, 1, 1)
+        GameTooltip:AddLine("Every unbound Bind on Equip weapon and armour piece in your bags goes to the alts who get " .. setup.cat .. ", on top of the items listed here.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    setup.boeBtn:SetScript("OnLeave", UI.HideTip)
 
     local drop = CreateFrame("Button", nil, mid)
     drop:SetPoint("TOPLEFT", 6, -28)
@@ -598,6 +637,8 @@ local function BuildSetup()
         end
         table.sort(assigned, function(a, b) return UI.ItemNameQuality(a.id) < UI.ItemNameQuality(b.id) end)
         self.midHead:SetText(cat .. "  |cff9e9ea8" .. #assigned .. " items|r")
+        self.boeBtn:SetOn(BoEGearOn(cat))
+        self.boeBtn.text:SetText(BoEGearOn(cat) and "All BoE gear: on" or "All BoE gear: off")
         self.assigned:SetItems(assigned, true)
 
         -- bag items grouped by type (unbound only)
@@ -691,6 +732,7 @@ JQ.byKey[KEY].onLoad = function(enabled)
     db = JaseQoLDB.bankMail
     db.mats = db.mats or {}
     db.receives = db.receives or {}
+    db.boeGear = db.boeGear or {}
 
     SLASH_JASEQOLMATS1 = "/jmats"
     SlashCmdList.JASEQOLMATS = function()
