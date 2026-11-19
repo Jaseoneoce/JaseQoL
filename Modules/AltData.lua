@@ -67,13 +67,39 @@ end
 
 function Alts.MyName() return NAME end
 
+-- Shown name: first name + last initial ("Jaseone B.") when the last name is
+-- known, else the first name.
+function Alts.Display(name)
+    local data = name and Alts.RealmTable()[name]
+    local sur = data and data.surname
+    if not sur and data and data.full and data.full ~= name then
+        sur = data.full:sub(#name + 2)
+    end
+    if sur and sur ~= "" then
+        local initial = sur:match("^[%z\1-\127\194-\244][\128-\191]*") or sur:sub(1, 1)
+        return name .. " " .. initial .. "."
+    end
+    return name
+end
+
+-- What mail is addressed to: the full name ("First Last") when known.
+function Alts.MailName(name)
+    local data = name and Alts.RealmTable()[name]
+    return (data and data.full) or name
+end
+
+function Alts.HasFullName(name)
+    local data = name and Alts.RealmTable()[name]
+    return data and data.full and data.full ~= name or false
+end
+
 -- Characters on this realm, sorted by name. sameFaction: only my faction.
 function Alts.List(sameFaction)
     local out = {}
     local myFaction = UnitFactionGroup("player")
     for name, data in pairs(Alts.RealmTable()) do
         if not sameFaction or data.faction == myFaction then
-            out[#out + 1] = { name = name, data = data }
+            out[#out + 1] = { name = name, data = data, display = Alts.Display(name) }
         end
     end
     table.sort(out, function(a, b) return a.name < b.name end)
@@ -201,8 +227,22 @@ local function ScanProfessions()
     me.profs = profs
 end
 
+-- WoW Forever characters have a last name: UnitName returns it second.
+-- Mail is addressed by the full name there ("First Last").
+local SEP = (Constants and Constants.CharacterNameSeparatorConsts
+    and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR) or " "
+
 local function Identity()
     local me = Alts.Me()
+    local first, surname = (UnitNameUnmodified or UnitName)("player")
+    if type(first) == "string" and not (issecretvalue and issecretvalue(first)) then
+        if type(surname) == "string" and surname ~= "" and not (issecretvalue and issecretvalue(surname)) then
+            me.full = first .. SEP .. surname
+            me.surname = surname
+        else
+            me.full = me.full or first
+        end
+    end
     local _, class = UnitClass("player")
     me.class = class
     me.level = UnitLevel("player")
@@ -296,7 +336,7 @@ local function AddLines(tt, data)
             if b > 0 then parts[#parts + 1] = "bags " .. b end
             if k > 0 then parts[#parts + 1] = "bank " .. k end
             if m > 0 then parts[#parts + 1] = "mail " .. m end
-            lines[#lines + 1] = { ("|cff%s%s|r"):format(JQ.UI.ClassHex(e.data.class), e.name),
+            lines[#lines + 1] = { ("|cff%s%s|r"):format(JQ.UI.ClassHex(e.data.class), e.display),
                 n .. "  |cff9e9ea8(" .. table.concat(parts, ", ") .. ")|r" }
         end
     end

@@ -110,7 +110,7 @@ local function Build()
                 self.chips[i] = c
             end
             c.alt = e.name
-            c.text:SetText(("|cff%s%s|r"):format(UI.ClassHex(e.data.class), e.name))
+            c.text:SetText(("|cff%s%s|r"):format(UI.ClassHex(e.data.class), e.display))
             local w = c.text:GetStringWidth() + 20
             c:SetWidth(w)
             c:ClearAllPoints()
@@ -150,7 +150,8 @@ local function Build()
         end
         local items = {}
         local classOf = {}
-        for _, e in ipairs(alts) do classOf[e.name] = e.data.class end
+        local displayOf = {}
+        for _, e in ipairs(alts) do classOf[e.name] = e.data.class; displayOf[e.name] = e.display end
         for _, it in ipairs(order) do
             it.name, it.q = UI.ItemNameQuality(it.id)
             if needle == "" or it.name:lower():find(needle, 1, true) then
@@ -159,7 +160,7 @@ local function Build()
                 table.sort(names, function(a, b) return it.per[a] > it.per[b] end)
                 local parts = {}
                 for _, n in ipairs(names) do
-                    parts[#parts + 1] = ("|cff%s%s|r %d"):format(UI.ClassHex(classOf[n]), n, it.per[n])
+                    parts[#parts + 1] = ("|cff%s%s|r %d"):format(UI.ClassHex(classOf[n]), displayOf[n] or n, it.per[n])
                 end
                 it.who = table.concat(parts, "   ")
                 items[#items + 1] = it

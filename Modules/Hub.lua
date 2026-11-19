@@ -4,16 +4,16 @@
 --  The Alt Inventory (/jinv) and Send mats setup (/jmats) windows share one
 --  place on screen and carry a tab bar ("Inventory" | "Send mats"): a tab
 --  click swaps to the other window at the same position and size.
---  A J button on the minimap (drag it around the edge) and an entry in the
---  minimap's addon menu open the last tab; click again to close.
+--  A J button you can put anywhere on screen (drag to move) and an
+--  entry in the minimap's addon menu open the last tab; click again to close.
 -------------------------------------------------------------------------------
 local _, JQ = ...
 local KEY = "hubButton"
 
 JQ.AddModule({
     key = KEY,
-    label = "Minimap button",
-    description = "A J button on the minimap that opens the JaseQoL window (Inventory and Send mats tabs). Drag it around the minimap edge. Also in the minimap's addon menu.",
+    label = "JaseQoL button",
+    description = "A J button you can drag anywhere on screen; it opens the JaseQoL window (Inventory and Send mats tabs). Drag it to move it. Also in the minimap's addon menu.",
     default = true,
 })
 
@@ -107,23 +107,16 @@ function Hub.UpdateTabs()
 end
 
 -------------------------------------------------------------------------------
---  Minimap button
+--  Floating J button (drag anywhere; position saved)
 -------------------------------------------------------------------------------
 local button
-
-local function Place()
-    local angle = math.rad(db.angle or 200)
-    local r = (Minimap:GetWidth() / 2) + 6
-    button:ClearAllPoints()
-    button:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * r, math.sin(angle) * r)
-end
 
 local function Tooltip(owner)
     GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
     GameTooltip:SetText("JaseQoL", 1, 1, 1)
     GameTooltip:AddLine("Click: Inventory / Send mats", 0.8, 0.8, 0.8)
     GameTooltip:AddLine("Right-click: settings", 0.8, 0.8, 0.8)
-    GameTooltip:AddLine("Drag: move around the minimap", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Drag: move it anywhere", 0.8, 0.8, 0.8)
     GameTooltip:Show()
 end
 
@@ -131,38 +124,44 @@ local function OpenSettings()
     if SlashCmdList.JASEQOL then SlashCmdList.JASEQOL("") end
 end
 
+local function SavePos()
+    local p, _, rp, x, y = button:GetPoint()
+    db.button = { p, rp, x, y }
+end
+
 local function BuildButton()
-    button = CreateFrame("Button", "JaseQoLMinimapButton", Minimap)
-    button:SetSize(31, 31)
+    button = CreateFrame("Button", "JaseQoLButton", UIParent)
+    button:SetSize(36, 36)
     button:SetFrameStrata("MEDIUM")
-    button:SetFrameLevel(8)
+    button:SetClampedToScreen(true)
+    button:SetMovable(true)
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:RegisterForDrag("LeftButton")
-    button:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
-    local icon = button:CreateTexture(nil, "BACKGROUND")
+    local pos = db.button
+    if pos then
+        button:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+    else
+        button:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
+    end
+    local icon = button:CreateTexture(nil, "ARTWORK")
     icon:SetTexture("Interface\\AddOns\\JaseQoL\\Media\\icon")
-    icon:SetSize(20, 20)
-    icon:SetPoint("CENTER", 0, 1)
-    local border = button:CreateTexture(nil, "OVERLAY")
-    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-    border:SetSize(53, 53)
-    border:SetPoint("TOPLEFT")
+    icon:SetAllPoints()
+    local hl = button:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetColorTexture(1, 1, 1, 0.15)
+    hl:SetAllPoints()
     button:SetScript("OnClick", function(_, mouse)
         if mouse == "RightButton" then OpenSettings() else Hub.Toggle() end
     end)
     button:SetScript("OnEnter", Tooltip)
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- Dragging only starts once the mouse moves, so a click never nudges it.
     button:SetScript("OnDragStart", function(self)
-        self:SetScript("OnUpdate", function()
-            local mx, my = Minimap:GetCenter()
-            local px, py = GetCursorPosition()
-            local s = Minimap:GetEffectiveScale()
-            db.angle = math.deg(math.atan2(py / s - my, px / s - mx))
-            Place()
-        end)
+        self:StartMoving()
     end)
-    button:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
-    Place()
+    button:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        SavePos()
+    end)
 end
 
 -- Minimap addon menu (AddonCompartmentFunc in the toc)
@@ -178,10 +177,8 @@ JQ.byKey[KEY].onLoad = function(enabled)
     local boot = CreateFrame("Frame")
     boot:RegisterEvent("PLAYER_LOGIN")
     boot:SetScript("OnEvent", function()
-        if Minimap then
-            BuildButton()
-            button:SetShown(JQ.IsEnabled(KEY))
-        end
+        BuildButton()
+        button:SetShown(JQ.IsEnabled(KEY))
     end)
 end
 JQ.byKey[KEY].onEnable = function() if button then button:Show() end end

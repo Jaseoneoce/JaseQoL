@@ -154,7 +154,7 @@ function SendNext()
         end
     end
     if attached == 0 then
-        return Finish(job.mails > 0 and ("Done: " .. job.mails .. " mail(s) sent to " .. job.to .. ".") or "Nothing left to send.")
+        return Finish(job.mails > 0 and ("Done: " .. job.mails .. " mail(s) sent to " .. Alts.Display(job.to)) or "Nothing left to send.")
     end
     local price = GetSendMailPrice and GetSendMailPrice() or 0
     if price > GetMoney() then
@@ -164,8 +164,8 @@ function SendNext()
     job.batch = batch
     job.mails = job.mails + 1
     local cats = table.concat(AltCategories(job.to), ", ")
-    Status(("Sending mail %d to %s..."):format(job.mails, job.to))
-    SendMail(job.to, "Mats" .. (cats ~= "" and (": " .. cats) or ""), "Sent by JaseQoL")
+    Status(("Sending mail %d to %s..."):format(job.mails, Alts.Display(job.to)))
+    SendMail(Alts.MailName(job.to), "Mats" .. (cats ~= "" and (": " .. cats) or ""), "Sent by JaseQoL")
 end
 
 local function StartSend(alt)
@@ -179,7 +179,11 @@ local function StartSend(alt)
         return
     end
     local queue = StacksFor(alt)
-    if #queue == 0 then Status("Nothing in your bags for " .. alt .. ".") return end
+    if #queue == 0 then Status("Nothing in your bags for " .. Alts.Display(alt)) return end
+    if not Alts.HasFullName(alt) then
+        Status("Log in on " .. alt .. " once so JaseQoL learns their last name (mail needs the full name).")
+        return
+    end
     job = { to = alt, queue = queue, sent = {}, mails = 0 }
     SendNext()
 end
@@ -352,7 +356,7 @@ local function BuildPanel()
             b:ClearAllPoints()
             local col, rowI = (i - 1) % 2, math.floor((i - 1) / 2)
             b:SetPoint("TOPLEFT", col * (w + 6), -rowI * 38)
-            b.text:SetText(("|cff%s%s|r"):format(UI.ClassHex(e.data.class), e.name))
+            b.text:SetText(("|cff%s%s|r"):format(UI.ClassHex(e.data.class), e.display))
             local cats = AltCategories(e.name)
             b.sub:SetText(#cats > 0 and table.concat(cats, ", ") or "|cffff7070nothing assigned|r")
             b:SetOn(db.lastAlt == e.name)
@@ -389,7 +393,7 @@ local function BuildPanel()
             it.stacks = it.stacks + 1
         end
         table.sort(items, function(a, b) return UI.ItemNameQuality(a.id) < UI.ItemNameQuality(b.id) end)
-        self.listHead:SetText("In your bags for " .. db.lastAlt)
+        self.listHead:SetText("In your bags for " .. Alts.Display(db.lastAlt))
         self.list:SetItems(items)
         local mails = math.ceil(#stacks / MAX_ATTACH)
         self.summary:SetText(#stacks == 0 and "Nothing in your bags for them right now."
@@ -645,7 +649,7 @@ local function BuildSetup()
             end
             c.alt = e.name
             local rank = e.data.profs and e.data.profs[cat]
-            c.text:SetText(("|cff%s%s|r%s"):format(UI.ClassHex(e.data.class), e.name, rank and ("  |cff9e9ea8" .. rank .. "|r") or ""))
+            c.text:SetText(("|cff%s%s|r%s"):format(UI.ClassHex(e.data.class), e.display, rank and ("  |cff9e9ea8" .. rank .. "|r") or ""))
             local w = c.text:GetStringWidth() + 22
             c:SetWidth(w)
             if x + w > areaW and x > 0 then x, y = 0, y + 28 end
