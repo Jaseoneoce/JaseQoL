@@ -3,3 +3,4 @@ package-as: JaseQoL
 ignore:
   - README.md
   - .github
+  - Media/icon-preview.png

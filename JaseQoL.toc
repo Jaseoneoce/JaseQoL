@@ -6,7 +6,7 @@
 ## Version: @project-version@
 ## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, ForeverDungeonJournal
 ## SavedVariables: JaseQoLDB
-## IconTexture: Interface\Icons\INV_Misc_Gear_01
+## IconTexture: Interface\AddOns\JaseQoL\Media\icon
 
 Core.lua
 Modules\XPLevelColor.lua

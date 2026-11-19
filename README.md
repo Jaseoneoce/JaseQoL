@@ -1,5 +1,7 @@
 # JaseQoL
 
+<img src="Media/icon-preview.png" width="96" alt="JaseQoL icon">
+
 Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switch.
 
 | Tweak | What it does | Needs |
