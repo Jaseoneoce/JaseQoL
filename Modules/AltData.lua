@@ -93,6 +93,26 @@ function Alts.HasFullName(name)
     return data and data.full and data.full ~= name or false
 end
 
+-- Last names JaseQoL hasn't seen yet, borrowed from EllesmereUI: it records
+-- every character's full name ("First Last") when that character logs in.
+function Alts.LearnNames()
+    local db = EllesmereUIDB
+    local chars = type(db) == "table" and type(db.chars) == "table" and db.chars
+    if not chars then return end
+    local realm = Alts.RealmTable()
+    for _, c in pairs(chars) do
+        local full = type(c) == "table" and c.name
+        if type(full) == "string" then
+            local first, rest = full:match("^(%S+)%s+(.+)$")
+            local data = first and realm[first]
+            if data and not (data.full and data.full ~= first) then
+                data.full = full
+                data.surname = rest
+            end
+        end
+    end
+end
+
 -- Characters on this realm, sorted by name. sameFaction: only my faction.
 function Alts.List(sameFaction)
     local out = {}
@@ -286,6 +306,7 @@ ev:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
         REALM, NAME = GetRealmName(), UnitName("player")
         Identity(); ScanProfessions(); ScanBags()
+        pcall(Alts.LearnNames)
     elseif event == "SKILL_LINES_CHANGED" or event == "TRADE_SKILL_SHOW" then
         ScanProfessions()
     elseif event == "PLAYER_LEVEL_UP" then

@@ -128,8 +128,10 @@ end
 local job          -- { to, queue, sentNow = {[id]=n}, mails, cancelled }
 local panel        -- mailbox panel (forward)
 
-local function Status(text)
+-- On the panel (two lines, wrapped) and, unless it's a progress line, in chat.
+local function Status(text, quiet)
     if panel and panel.status then panel.status:SetText(text or "") end
+    if text and text ~= "" and not quiet then JQ.Print(text) end
 end
 
 local function FirstFreeAttachSlot()
@@ -190,7 +192,7 @@ function SendNext()
     job.batch = batch
     job.mails = job.mails + 1
     local cats = table.concat(AltCategories(job.to), ", ")
-    Status(("Sending mail %d to %s..."):format(job.mails, Alts.Display(job.to)))
+    Status(("Sending mail %d to %s..."):format(job.mails, Alts.Display(job.to)), true)
     SendMail(Alts.MailName(job.to), "Mats" .. (cats ~= "" and (": " .. cats) or ""), "Sent by JaseQoL")
 end
 
@@ -206,8 +208,9 @@ local function StartSend(alt)
     end
     local queue = StacksFor(alt)
     if #queue == 0 then Status("Nothing in your bags for " .. Alts.Display(alt)) return end
+    if not Alts.HasFullName(alt) then pcall(Alts.LearnNames) end
     if not Alts.HasFullName(alt) then
-        Status("Log in on " .. alt .. " once so JaseQoL learns their last name (mail needs the full name).")
+        Status("Can't send yet: mail needs " .. alt .. "'s full name. Log in on " .. alt .. " once so JaseQoL learns their last name.")
         return
     end
     job = { to = alt, queue = queue, sent = {}, mails = 0 }
@@ -311,7 +314,7 @@ local function BuildPanel()
     local box = UI.Panel(panel)
     box:SetPoint("TOPLEFT", panel.listHead, "BOTTOMLEFT", -2, -4)
     box:SetPoint("RIGHT", -8, 0)
-    box:SetPoint("BOTTOM", 0, 84)
+    box:SetPoint("BOTTOM", 0, 90)
     panel.list = UI.List(box, 24, function(L)
         local row = CreateFrame("Button", nil, L)
         UI.Fill(row, 1, 1, 1, 0.08, "HIGHLIGHT")
@@ -339,18 +342,22 @@ local function BuildPanel()
     panel.list:SetPoint("BOTTOMRIGHT", -3, 3)
 
     panel.summary = UI.Text(panel, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
-    panel.summary:SetPoint("BOTTOMLEFT", 10, 62)
+    panel.summary:SetPoint("BOTTOMLEFT", 10, 68)
     panel.summary:SetPoint("RIGHT", -10, 0)
 
     panel.send = UI.Button(panel, "Send mats", 120, 26)
-    panel.send:SetPoint("BOTTOM", 0, 30)
+    panel.send:SetPoint("BOTTOM", 0, 36)
     panel.send:SetScript("OnClick", function()
         if db.lastAlt then StartSend(db.lastAlt) end
     end)
 
     panel.status = UI.Text(panel, 11, 1, 0.82, 0.2)
-    panel.status:SetPoint("BOTTOMLEFT", 10, 10)
-    panel.status:SetPoint("RIGHT", -10, 0)
+    panel.status:SetPoint("TOPLEFT", panel.send, "BOTTOMLEFT", -70, -3)
+    panel.status:SetPoint("BOTTOMRIGHT", -8, 2)
+    panel.status:SetJustifyH("CENTER")
+    panel.status:SetJustifyV("TOP")
+    panel.status:SetWordWrap(true)
+    if panel.status.SetMaxLines then panel.status:SetMaxLines(2) end
 
     function panel:Refresh()
         if not self:IsShown() then return end
