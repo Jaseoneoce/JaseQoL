@@ -30,6 +30,7 @@ JQ.AddModule({
 
 local Alts = {}
 JQ.Alts = Alts
+local bankOpen = false
 
 local C = C_Container
 local REALM, NAME
@@ -192,7 +193,7 @@ local function Scan(bagIDs)
     return counts
 end
 
-local bankOpen = false
+bankOpen = false
 
 local function ScanBags()
     local me = Alts.Me()
@@ -269,6 +270,54 @@ local function Identity()
     me.faction = UnitFactionGroup("player")
 end
 
+-- Where each character is parked (zone + sub-zone, saved as it moves and at
+-- logout), and the towns with a bank: the known ones plus any town where a
+-- bank has actually been opened (JaseQoLDB.bankTowns).
+Alts.BANK_TOWNS = {
+    ["Stormwind City"] = true, ["Ironforge"] = true, ["Darnassus"] = true,
+    ["Orgrimmar"] = true, ["Undercity"] = true, ["Thunder Bluff"] = true,
+    ["Booty Bay"] = true, ["Gadgetzan"] = true, ["Everlook"] = true,
+}
+
+local function RecordLocation()
+    local me = Alts.Me()
+    local zone = GetRealZoneText and GetRealZoneText() or nil
+    local sub = GetSubZoneText and GetSubZoneText() or nil
+    if type(zone) == "string" and zone ~= "" then me.zone = zone end
+    me.subzone = (type(sub) == "string" and sub ~= "") and sub or nil
+end
+
+local function LearnBankTown()
+    local me = Alts.Me()
+    JaseQoLDB.bankTowns = JaseQoLDB.bankTowns or {}
+    if me.subzone then JaseQoLDB.bankTowns[me.subzone] = true end
+    if me.zone then JaseQoLDB.bankTowns[me.zone] = true end
+end
+
+function Alts.IsBankTown(name)
+    if not name then return false end
+    return Alts.BANK_TOWNS[name] or (JaseQoLDB.bankTowns and JaseQoLDB.bankTowns[name]) or false
+end
+
+-- Is this character parked in a town with a bank?
+function Alts.InBankTown(altName)
+    local data = Alts.RealmTable()[altName]
+    if not data then return false end
+    return Alts.IsBankTown(data.subzone) or Alts.IsBankTown(data.zone)
+end
+
+-- "Ironforge" / "Booty Bay, Stranglethorn Vale" / nil
+function Alts.WhereText(altName)
+    local data = Alts.RealmTable()[altName]
+    if not (data and data.zone) then return nil end
+    if data.subzone and data.subzone ~= data.zone and Alts.IsBankTown(data.subzone) then
+        return data.subzone .. ", " .. data.zone
+    end
+    return data.zone
+end
+
+function Alts.IsBankOpen() return bankOpen end
+
 -- Windows that show alt data refresh through this.
 local listeners = {}
 function Alts.OnChange(fn) listeners[#listeners + 1] = fn end
@@ -305,14 +354,17 @@ ev:SetScript("OnEvent", function(_, event)
     if not JQ.IsEnabled(KEY) then return end
     if event == "PLAYER_LOGIN" then
         REALM, NAME = GetRealmName(), UnitName("player")
-        Identity(); ScanProfessions(); ScanBags()
+        Identity(); ScanProfessions(); ScanBags(); RecordLocation()
         pcall(Alts.LearnNames)
     elseif event == "SKILL_LINES_CHANGED" or event == "TRADE_SKILL_SHOW" then
         ScanProfessions()
     elseif event == "PLAYER_LEVEL_UP" then
         Identity()
+    elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED"
+        or event == "ZONE_CHANGED_INDOORS" or event == "PLAYER_LOGOUT" then
+        if NAME then RecordLocation() end
     elseif event == "BANKFRAME_OPENED" then
-        bankOpen = true; ScanBank(); Alts.Changed()
+        bankOpen = true; RecordLocation(); LearnBankTown(); ScanBank(); Alts.Changed()
     elseif event == "BANKFRAME_CLOSED" then
         bankOpen = false
     elseif event == "MAIL_INBOX_UPDATE" or event == "MAIL_SHOW" then
@@ -326,6 +378,7 @@ JQ.byKey[KEY].onLoad = function()
     JaseQoLDB.alts = JaseQoLDB.alts or {}
     JaseQoLDB.items = JaseQoLDB.items or {}
     for _, e in ipairs({ "PLAYER_LOGIN", "SKILL_LINES_CHANGED", "TRADE_SKILL_SHOW", "PLAYER_LEVEL_UP",
+        "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "PLAYER_LOGOUT",
         "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "MAIL_SHOW", "MAIL_INBOX_UPDATE",
         "BAG_UPDATE_DELAYED", "PLAYERBANKSLOTS_CHANGED", "PLAYERBANKBAGSLOTS_CHANGED" }) do
         pcall(ev.RegisterEvent, ev, e)

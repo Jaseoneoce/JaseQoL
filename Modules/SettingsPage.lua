@@ -12,7 +12,7 @@ local UI = JQ.UI
 
 local GROUPS = {
     { "Dungeon Journal", { "djOverhaul", "djSkin" } },
-    { "Alts, bank & mail", { "altTracker", "altTooltip", "altInventory", "bankMail" } },
+    { "Alts, bank & mail", { "altTracker", "altTooltip", "altInventory", "bankMail", "altRequest" } },
     { "Unit frames & nameplates", { "xpLevelColor" } },
     { "Skins", { "mcSkin", "gosSkin" } },
     { "Other", { "boeGuard", "hubButton" } },

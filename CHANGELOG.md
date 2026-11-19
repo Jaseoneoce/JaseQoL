@@ -2,6 +2,14 @@
 
 JaseQoL is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### New
+- **Request mats from alts** - in your profession window, a side panel shows the selected recipe's reagents for N crafts (need / have / on your alts); **Request** asks your alts for what's missing. JaseQoL plans who sends what (fewest logins, alts parked in a bank town, bags before bank) and gives each alt a job in the new **Requests** tab: **Pull from bank** takes out exactly what's needed, **Send** mails exactly that to you. Right-click a requested item to keep some on each alt.
+
+### Changed
+- Alt tracking remembers where each character is parked and learns which towns have a bank.
+
 ## v1.1.1 - 2026-11-19
 
 ### Changed

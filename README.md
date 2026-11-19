@@ -13,8 +13,9 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 | **Alt counts on item tooltips** | Item tooltips list which of your characters on this realm have the item: bags, bank, mail and total. | Alt tracking |
 | **Alt inventory window** | `/jinv`: every item on all your characters on this realm, with search and per-character / bags / bank / mail filters. | Alt tracking |
 | **Send mats to bank alts** | `/jmats`: assign materials to professions (or "Bank"); alts get the categories of the professions they have, and you can switch any on or off per alt. At the mailbox, pick an alt and press **Send mats**: every unbound stack for them is mailed (to their full name), 12 per mail. Each profession can also **send all BoE gear** (on for Enchanting by default). | Alt tracking |
+| **Request mats from alts** | In your profession window, request a recipe's missing reagents from your alts. JaseQoL plans who sends what (fewest logins, alts parked in bank towns, bags before bank) and each alt gets a job in the **Requests** tab with **Pull from bank** and **Send** buttons (exact amounts). | Alt tracking |
 | **Warn when selling BoE items** | Selling a Bind on Equip item to a vendor shows a big warning so you can buy it back. For a BoE label on bag slots, use EllesmereUI > Bags > Show BoE / Warbound Text. | |
-| **JaseQoL button** | A J button you can drag anywhere: click for the JaseQoL window (Inventory, Send mats, Settings tabs), right-click for Settings. Also in the minimap's addon menu. | |
+| **JaseQoL button** | A J button you can drag anywhere: click for the JaseQoL window (Inventory, Send mats, Requests, Settings tabs), right-click for Settings. Also in the minimap's addon menu. | |
 | **Mastercraft skin** | Skins Mastercraft in the EllesmereUI style (EUI window frames, neutral panels, your accent, your font) on top of Mastercraft's flat Classic look. Your previous Mastercraft look comes back if you switch it off. | EllesmereUI Blizzard Skins+, Mastercraft |
 | **GuildOS skin** | Skins GuildOS in the EllesmereUI style: neutral dark windows, grey hairlines, your EUI accent instead of its gold, your EUI font. On GuildOS's flat "GuildOS" style. | EllesmereUI Blizzard Skins+, GuildOS |
 
@@ -23,7 +24,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 - **JaseQoL window → Settings tab** (`/jq`, or right-click the J button): every tweak with an On/Off switch and a tooltip
 - **Game menu → Options → AddOns → JaseQoL**
 - **EllesmereUI options → JaseQoL** (when EllesmereUI is installed)
-- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `boeGuard`, `hubButton`, `mcSkin`, `gosSkin`)
+- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `boeGuard`, `hubButton`, `mcSkin`, `gosSkin`)
 
 Every dependency is optional: a tweak whose addon is missing simply does nothing.
 
