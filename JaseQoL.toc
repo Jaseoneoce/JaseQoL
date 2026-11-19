@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## AllowLoadGameType: camelot
 ## Title: |cff0cd29fJaseQoL|r
-## Notes: Jase's own tweaks: XP level colours, an EllesmereUI skin and a new view for the Dungeon Journal. Each one can be switched on or off (/jq).
+## Notes: Jase's own tweaks: XP level colours, Dungeon Journal skin and new view, alt inventory with tooltips, send mats to bank alts, BoE sell warning. Each one can be switched on or off (/jq).
 ## Author: jasone
 ## Version: @project-version@
 ## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, ForeverDungeonJournal
@@ -9,7 +9,12 @@
 ## IconTexture: Interface\AddOns\JaseQoL\Media\icon
 
 Core.lua
+Modules\UI.lua
 Modules\XPLevelColor.lua
 Modules\DungeonJournalSkin.lua
 Modules\JournalView.lua
+Modules\AltData.lua
+Modules\AltInventory.lua
+Modules\BankMail.lua
+Modules\BoEGuard.lua
 Options.lua
