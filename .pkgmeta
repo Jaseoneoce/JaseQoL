@@ -4,3 +4,4 @@ ignore:
   - README.md
   - .github
   - Media/icon-preview.png
+  - Media/avatar-512.png
