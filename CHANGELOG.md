@@ -1,0 +1,40 @@
+# Changelog
+
+JaseQoL is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
+
+## v1.1.0 - 2026-11-19
+
+### New
+- **Alt tracking** - remembers each character's professions and what's in their bags, bank and mailbox (bank and mail are read when you open them).
+- **Alt counts on item tooltips** - item tooltips list which of your characters on this realm have the item: bags, bank, mail and a total.
+- **Alt inventory** (`/jinv`) - every item on all your characters on this realm, with search and per-character / bags / bank / mail filters.
+- **Send mats to bank alts** (`/jmats`) - assign materials to professions (or "Bank"); alts get the categories of the professions they have, switchable per alt. At the mailbox, pick an alt and press **Send mats**: every unbound stack for them is mailed, 12 per mail.
+- **All BoE gear** option per profession - unbound Bind on Equip weapons and armour go along too; on for Enchanting by default.
+- **JaseQoL window** - Inventory, Send mats and Settings as tabs in one window, opened from a **J button you can drag anywhere** or the minimap's addon menu.
+- **Settings tab** - every tweak with an On/Off switch, a one-line description and a tooltip; a Reload UI button when a switch needs one. `/jq` or right-click the J button.
+- **Warn when selling BoE items** - a big warning when a Bind on Equip item is sold to a vendor, so it can be bought back.
+- **Mastercraft skin** - Mastercraft in the EllesmereUI style: EUI window frames, neutral panels, your accent and font (on Mastercraft's flat Classic look).
+- **GuildOS skin** - GuildOS in the EllesmereUI style: neutral dark windows, your accent instead of its gold, your font (on GuildOS's flat style).
+
+### Changed
+- Characters show as **first name + last initial** ("Jaseone B."); mail goes to the full WoW Forever name. Last names come from your own logins or EllesmereUI's records.
+- The Send mats panel steps past an open letter and EllesmereUI's alt list, and moves to the left when there's no room.
+- Send mats messages wrap onto two lines and also print in chat.
+
+## v1.0.2 - 2026-11-19
+
+### Changed
+- A full-size J image for the GitHub profile picture (WowUp shows it next to the addon). No in-game changes.
+
+## v1.0.1 - 2026-11-19
+
+### New
+- The **J icon** in the AddOns list.
+
+## v1.0.0 - 2026-11-19
+
+### New
+- **XP level colour** - unit frame and nameplate level text coloured by whether the mob gives XP: red, orange, yellow, green, grey (grey = no XP).
+- **Dungeon Journal skin** - the Dungeon Journal window in the EllesmereUI style.
+- **Dungeon Journal: new view** (`/jdj`) - a list-based journal: dungeon list, bosses, a loot grid with filters, quests with status, chains, needed items, summon chains, Show on map / Show turn-in, Share and Track. Classic view is one click away.
+- Every tweak has its own on/off switch (Options > AddOns > JaseQoL, EllesmereUI options, `/jq`).
