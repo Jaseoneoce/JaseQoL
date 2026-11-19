@@ -213,16 +213,45 @@ local function BuildPanel()
     panel:SetSize(270, 430)
     -- Beside the mail window, or beside EllesmereUI's alt list when it sits
     -- on the right of the Send Mail page.
-    function panel:Reanchor()
-        local to = MailFrame
-        local eui = _G.EllesmereUIMailAltList
-        if eui and eui:IsVisible() and eui:GetLeft() and MailFrame:GetRight() and eui:GetLeft() >= MailFrame:GetRight() - 2 then
-            to = eui
+    -- Right of everything the mailbox has open: the mail window, an open
+    -- letter (OpenMailFrame, shown beside it while reading a mail) and
+    -- EllesmereUI's alt list. With no room on the right of the screen it goes
+    -- on the left of the leftmost of them instead.
+    local hooked = setmetatable({}, { __mode = "k" })
+    local function Watch(f)
+        if f and not hooked[f] and f.HookScript then
+            hooked[f] = true
+            local again = function() C_Timer.After(0, function() panel.anchorSig = nil; panel:Reanchor() end) end
+            f:HookScript("OnShow", again)
+            f:HookScript("OnHide", again)
         end
-        if self.anchorTo == to then return end
-        self.anchorTo = to
+    end
+    function panel:Reanchor()
+        local frames = { MailFrame }
+        local letter, eui = _G.OpenMailFrame, _G.EllesmereUIMailAltList
+        Watch(letter); Watch(eui)
+        if letter and letter:IsVisible() then frames[#frames + 1] = letter end
+        if eui and eui:IsVisible() then frames[#frames + 1] = eui end
+        local rightmost, leftmost = MailFrame, MailFrame
+        for _, f in ipairs(frames) do
+            local r, l = f:GetRight(), f:GetLeft()
+            if r and rightmost:GetRight() and r > rightmost:GetRight() then rightmost = f end
+            if l and leftmost:GetLeft() and l < leftmost:GetLeft() then leftmost = f end
+        end
+        local side = "right"
+        local sw = UIParent:GetRight()
+        local rr = rightmost:GetRight()
+        if rr and sw and rr + 8 + self:GetWidth() > sw then side = "left" end
+        local to = side == "right" and rightmost or leftmost
+        local sig = tostring(to) .. side
+        if self.anchorSig == sig then return end
+        self.anchorSig = sig
         self:ClearAllPoints()
-        self:SetPoint("TOPLEFT", to, "TOPRIGHT", 8, 0)
+        if side == "right" then
+            self:SetPoint("TOPLEFT", to, "TOPRIGHT", 8, 0)
+        else
+            self:SetPoint("TOPRIGHT", to, "TOPLEFT", -8, 0)
+        end
     end
     panel:Reanchor()
     UI.Fill(panel, 0.045, 0.045, 0.05, 0.96)
@@ -371,8 +400,8 @@ local function BuildPanel()
     panel:SetScript("OnShow", function(self) self:Refresh() end)
     -- follow EllesmereUI's alt list as it appears / moves (Send tab)
     if SendMailFrame then
-        SendMailFrame:HookScript("OnShow", function() C_Timer.After(0.05, function() panel.anchorTo = nil; panel:Refresh() end) end)
-        SendMailFrame:HookScript("OnHide", function() panel.anchorTo = nil; panel:Refresh() end)
+        SendMailFrame:HookScript("OnShow", function() C_Timer.After(0.05, function() panel.anchorSig = nil; panel:Refresh() end) end)
+        SendMailFrame:HookScript("OnHide", function() C_Timer.After(0.05, function() panel.anchorSig = nil; panel:Refresh() end) end)
     end
     Alts.OnChange(function() if panel:IsShown() then panel:Refresh() end end)
 end
