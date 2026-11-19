@@ -2,6 +2,13 @@
 
 JaseQoL is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.1.1 - 2026-11-19
+
+### Changed
+- A fresh addon description in the AddOns list and in WowUp, covering every tweak.
+- Release notes now come from this changelog, so WowUp's Changelog tab shows what's new in each update.
+- JaseQoL now says plainly that it's built with AI assistance (Claude Code), in its addon info, README and changelog.
+
 ## v1.1.0 - 2026-11-19
 
 ### New
