@@ -14,7 +14,7 @@ local GROUPS = {
     { "Dungeon Journal", { "djOverhaul", "djSkin" } },
     { "Alts, bank & mail", { "altTracker", "altTooltip", "altInventory", "bankMail" } },
     { "Unit frames & nameplates", { "xpLevelColor" } },
-    { "Skins", { "mcSkin" } },
+    { "Skins", { "mcSkin", "gosSkin" } },
     { "Other", { "boeGuard", "hubButton" } },
 }
 local SLASH = {
