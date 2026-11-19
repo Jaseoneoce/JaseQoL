@@ -172,12 +172,24 @@ local function Build()
 
     win:SetScript("OnShow", function(self) self:Refresh() end)
     JQ.Alts.OnChange(function() if win:IsShown() then win:Refresh() end end)
+    JQ.Hub.Attach(win, "inventory")
 end
+
+JQ.Hub.Register({
+    key = "inventory", label = "Inventory",
+    enabled = function() return JQ.IsEnabled(KEY) end,
+    frame = function() return win end,
+    open = function()
+        if not JQ.IsEnabled(KEY) then return end
+        if not win then Build() end
+        return win
+    end,
+})
 
 local function Toggle()
     if not JQ.IsEnabled(KEY) then JQ.Print("Alt inventory window is off (/jq altInventory).") return end
-    if not win then Build() end
-    win:SetShown(not win:IsShown())
+    if win and win:IsShown() then win:Hide() return end
+    JQ.Hub.Show("inventory")
 end
 JQ.ToggleAltInventory = Toggle
 

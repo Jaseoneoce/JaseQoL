@@ -53,6 +53,7 @@ function JQ.ApplyChange(key, value)
     end
     local fn = value and spec.onEnable or spec.onDisable
     if fn then pcall(fn) end
+    if JQ.Hub then pcall(JQ.Hub.UpdateTabs) end
     JQ.Print(spec.label .. (value and " on." or " off."))
 end
 

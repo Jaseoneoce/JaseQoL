@@ -7,9 +7,13 @@
 ## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, ForeverDungeonJournal
 ## SavedVariables: JaseQoLDB
 ## IconTexture: Interface\AddOns\JaseQoL\Media\icon
+## AddonCompartmentFunc: JaseQoL_OnAddonCompartmentClick
+## AddonCompartmentFuncOnEnter: JaseQoL_OnAddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: JaseQoL_OnAddonCompartmentLeave
 
 Core.lua
 Modules\UI.lua
+Modules\Hub.lua
 Modules\XPLevelColor.lua
 Modules\DungeonJournalSkin.lua
 Modules\JournalView.lua

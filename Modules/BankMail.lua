@@ -631,12 +631,22 @@ local function BuildSetup()
 
     setup:SetScript("OnShow", function(self) self:Refresh() end)
     Alts.OnChange(function() if setup:IsShown() then setup:Refresh() end end)
+    JQ.Hub.Attach(setup, "mats")
 end
 
+JQ.Hub.Register({
+    key = "mats", label = "Send mats",
+    enabled = function() return JQ.IsEnabled(KEY) end,
+    frame = function() return setup end,
+    open = function()
+        if not JQ.IsEnabled(KEY) then return end
+        if not setup then BuildSetup() end
+        return setup
+    end,
+})
+
 function OpenSetup()
-    if not setup then BuildSetup() end
-    setup:Show()
-    setup:Refresh()
+    JQ.Hub.Show("mats")
 end
 
 -------------------------------------------------------------------------------
