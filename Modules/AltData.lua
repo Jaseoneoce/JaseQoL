@@ -37,8 +37,8 @@ local REALM, NAME
 
 -- Professions recognised (English client names).
 Alts.PROFESSIONS = {
-    "Alchemy", "Blacksmithing", "Enchanting", "Engineering", "Herbalism", "Jewelcrafting",
-    "Inscription", "Leatherworking", "Mining", "Skinning", "Tailoring",
+    "Alchemy", "Blacksmithing", "Enchanting", "Engineering", "Herbalism",
+    "Leatherworking", "Mining", "Skinning", "Tailoring",
     "Cooking", "First Aid", "Fishing", "Lockpicking",
 }
 local IS_PROF = {}

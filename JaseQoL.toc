@@ -26,6 +26,7 @@ Modules\AltRequest.lua
 Modules\ProfessionsResize.lua
 Modules\BoEGuard.lua
 Modules\AHReloadWarn.lua
+Modules\AHDebug.lua
 Modules\MastercraftSkin.lua
 Modules\GuildOSSkin.lua
 Modules\SettingsPage.lua

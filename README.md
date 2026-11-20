@@ -17,6 +17,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 | **Resizable profession window** | Drag the grip in the profession window's bottom-right corner to make it bigger; the size sticks. Right-click the grip to reset. | |
 | **Warn when selling BoE items** | Selling a Bind on Equip item to a vendor shows a big warning so you can buy it back. For a BoE label on bag slots, use EllesmereUI > Bags > Show BoE / Warbound Text. | |
 | **Warn at the auction house after /reload** | After a `/reload`, posting at the auction house lists one item and then times out until you relog. Opening the auction house after a reload shows a warning to relog (`/camp`) before posting. | |
+| **Auction house debug log** | Off by default. `/jahlog on` records every auction house call (and which addon made it), the server's replies, errors and blocked actions, and flags posts that get no reply. `/jahlog` shows the latest lines, `/jahlog mark <note>` adds a note. Saved at logout or `/reload`. | |
 | **JaseQoL button** | A J button you can drag anywhere: click for the JaseQoL window (Inventory, Send mats, Requests, Settings tabs), right-click for Settings. Also in the minimap's addon menu. | |
 | **Mastercraft skin** | Skins Mastercraft in the EllesmereUI style (EUI window frames, neutral panels, your accent, your font) on top of Mastercraft's flat Classic look. Your previous Mastercraft look comes back if you switch it off. | EllesmereUI Blizzard Skins+, Mastercraft |
 | **GuildOS skin** | Skins GuildOS in the EllesmereUI style: neutral dark windows, grey hairlines, your EUI accent instead of its gold, your EUI font. On GuildOS's flat "GuildOS" style. | EllesmereUI Blizzard Skins+, GuildOS |
@@ -26,7 +27,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 - **JaseQoL window → Settings tab** (`/jq`, or right-click the J button): every tweak with an On/Off switch and a tooltip
 - **Game menu → Options → AddOns → JaseQoL**
 - **EllesmereUI options → JaseQoL** (when EllesmereUI is installed)
-- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `profResize`, `boeGuard`, `ahReloadWarn`, `hubButton`, `mcSkin`, `gosSkin`)
+- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `profResize`, `boeGuard`, `ahReloadWarn`, `ahDebug`, `hubButton`, `mcSkin`, `gosSkin`)
 
 Every dependency is optional: a tweak whose addon is missing simply does nothing.
 

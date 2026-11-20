@@ -5,10 +5,12 @@ JaseQoL is built with AI assistance: written with Claude Code (Anthropic), direc
 ## Unreleased
 
 ### New
+- **Auction house debug log** (off by default) - `/jahlog on` records everything that happens at the auction house: each call and which addon made it, the server's replies, error messages and blocked actions, and a "NO REPLY" line (plus a chat note) when a post gets no answer within 10 seconds. `/jahlog` shows the latest lines, `/jahlog mark <note>` adds a note. Saved when you log out or `/reload`.
 - **Auction house warning after /reload** - posting after a `/reload` lists one item and then times out until you relog. Opening the auction house after a reload now warns you (on screen, in chat and above the auction house) to relog with `/camp` before posting.
 - **Lockpicking** is a Send mats category, for sending lockboxes to a rogue alt (alts with Lockpicking get it by default).
 
 ### Changed
+- Send mats: the Jewelcrafting and Inscription tabs are gone (neither is in WoW Forever).
 - Send mats setup: items already assigned to another category show it after their name, e.g. "Jet Black Feather (Leatherworking)".
 
 ### Fixed
