@@ -56,7 +56,22 @@ function Alts.RealmTable(realm)
     return JaseQoLDB.alts[realm]
 end
 
+-- The character's name and realm, looked up as soon as the game has them
+-- (some events, like SKILL_LINES_CHANGED, arrive before PLAYER_LOGIN).
+local function EnsureName()
+    if NAME then return true end
+    local n = UnitName and UnitName("player")
+    local r = GetRealmName and GetRealmName()
+    if type(n) == "string" and n ~= "" and n ~= UNKNOWNOBJECT and type(r) == "string" and r ~= "" then
+        NAME, REALM = n, r
+        return true
+    end
+    return false
+end
+Alts.EnsureName = EnsureName
+
 function Alts.Me()
+    if not EnsureName() then return { bags = {}, bank = {}, mail = {}, profs = {} } end   -- not saved
     local t = Alts.RealmTable()
     local me = t[NAME]
     if not me then
@@ -352,8 +367,11 @@ end
 
 ev:SetScript("OnEvent", function(_, event)
     if not JQ.IsEnabled(KEY) then return end
+    -- at login, read who we are afresh
+    if event == "PLAYER_LOGIN" then NAME = nil end
+    -- nothing to file anything under until the game knows who we are
+    if not EnsureName() then return end
     if event == "PLAYER_LOGIN" then
-        REALM, NAME = GetRealmName(), UnitName("player")
         Identity(); ScanProfessions(); ScanBags(); RecordLocation()
         pcall(Alts.LearnNames)
     elseif event == "SKILL_LINES_CHANGED" or event == "TRADE_SKILL_SHOW" then
@@ -362,7 +380,7 @@ ev:SetScript("OnEvent", function(_, event)
         Identity()
     elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED"
         or event == "ZONE_CHANGED_INDOORS" or event == "PLAYER_LOGOUT" then
-        if NAME then RecordLocation() end
+        RecordLocation()
     elseif event == "BANKFRAME_OPENED" then
         bankOpen = true; RecordLocation(); LearnBankTown(); ScanBank(); Alts.Changed()
     elseif event == "BANKFRAME_CLOSED" then

@@ -12,6 +12,7 @@ JaseQoL is built with AI assistance: written with Claude Code (Anthropic), direc
 - Alt tracking remembers where each character is parked and learns which towns have a bank.
 
 ### Fixed
+- A Lua error at login ("AltData.lua:64: table index is nil") when the game reports your skills before it knows your character's name.
 - "JaseQoL has been blocked from an action only available to the Blizzard UI": the keep-amount box no longer uses the game's popup system, and the Dungeon Journal swap waits until you're out of combat.
 
 ## v1.1.1 - 2026-11-19
