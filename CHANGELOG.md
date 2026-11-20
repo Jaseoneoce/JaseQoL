@@ -5,6 +5,7 @@ JaseQoL is built with AI assistance: written with Claude Code (Anthropic), direc
 ## Unreleased
 
 ### New
+- **Auction house warning after /reload** - posting after a `/reload` lists one item and then times out until you relog. Opening the auction house after a reload now warns you (on screen, in chat and above the auction house) to relog with `/camp` before posting.
 - **Lockpicking** is a Send mats category, for sending lockboxes to a rogue alt (alts with Lockpicking get it by default).
 
 ### Changed

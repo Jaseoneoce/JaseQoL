@@ -16,7 +16,7 @@ local GROUPS = {
     { "Unit frames & nameplates", { "xpLevelColor" } },
     { "Skins", { "mcSkin", "gosSkin" } },
     { "Professions", { "profResize" } },
-    { "Other", { "boeGuard", "hubButton" } },
+    { "Other", { "boeGuard", "ahReloadWarn", "hubButton" } },
 }
 local SLASH = {
     djOverhaul = "/jdj", altInventory = "/jinv", bankMail = "/jmats",

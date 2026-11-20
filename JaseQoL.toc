@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## AllowLoadGameType: camelot
 ## Title: |cff0cd29fJaseQoL|r
-## Notes: XP level colours, Dungeon Journal skin and new view, alt inventory and tooltips, send and request mats between alts, resizable profession window, BoE sell warning, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
+## Notes: XP level colours, Dungeon Journal skin and new view, alt inventory and tooltips, send/request mats between alts, resizable profession window, BoE sell warning, AH reload warning, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
 ## Author: jasone
 ## X-AI-Assisted: Built with AI assistance (Claude Code, Anthropic); directed and tested by Jase
 ## X-Website: https://github.com/Jaseoneoce/JaseQoL
@@ -25,6 +25,7 @@ Modules\BankMail.lua
 Modules\AltRequest.lua
 Modules\ProfessionsResize.lua
 Modules\BoEGuard.lua
+Modules\AHReloadWarn.lua
 Modules\MastercraftSkin.lua
 Modules\GuildOSSkin.lua
 Modules\SettingsPage.lua
