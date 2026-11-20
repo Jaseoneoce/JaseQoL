@@ -12,6 +12,8 @@ JaseQoL is built with AI assistance: written with Claude Code (Anthropic), direc
 
 ### Fixed
 - Bank contents weren't read at all on WoW Forever (its bank is bank tabs): the alt inventory, item tooltips, Send mats and Requests now see what's in each character's bank. Open each bank once to record it.
+- Two characters with the same first name (e.g. two Jaseones with different last names) overwrote each other: characters are now kept under their full name. Existing records, Send mats choices and requests are moved across at login. Log in on each once (and open their bank) to refresh them.
+- The login job message no longer ends in a double full stop ("to Jaseone B..").
 
 ## v1.2.0 - 2026-11-20
 
