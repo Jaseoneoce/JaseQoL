@@ -56,22 +56,41 @@ function Alts.RealmTable(realm)
     return JaseQoLDB.alts[realm]
 end
 
--- The character's name and realm, looked up as soon as the game has them
--- (some events, like SKILL_LINES_CHANGED, arrive before PLAYER_LOGIN).
+-- WoW Forever characters have a last name: UnitName returns it second.
+-- Mail is addressed by the full name there ("First Last"), and two characters
+-- can share a first name, so characters are filed under the full name.
+local SEP = (Constants and Constants.CharacterNameSeparatorConsts
+    and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR) or " "
+local loggedIn = false
+
+local function usable(s)
+    return type(s) == "string" and s ~= "" and s ~= UNKNOWNOBJECT and not (issecretvalue and issecretvalue(s))
+end
+
+-- The character's name ("First Last") and realm, once the game has them.
 local function EnsureName()
     if NAME then return true end
-    local n = UnitName and UnitName("player")
+    local n, sur = (UnitNameUnmodified or UnitName)("player")
     local r = GetRealmName and GetRealmName()
-    if type(n) == "string" and n ~= "" and n ~= UNKNOWNOBJECT and type(r) == "string" and r ~= "" then
-        NAME, REALM = n, r
+    if usable(n) and type(r) == "string" and r ~= "" then
+        NAME = usable(sur) and (n .. SEP .. sur) or n
+        REALM = r
         return true
     end
     return false
 end
 Alts.EnsureName = EnsureName
 
+-- "Jaseone Bourneagain" -> "Jaseone", "Bourneagain"; "Jaseone" -> "Jaseone", nil
+local function SplitName(s)
+    local first, rest = s:match("^(%S+)%s+(.+)$")
+    return first or s, rest
+end
+Alts.SplitName = SplitName
+
 function Alts.Me()
-    if not EnsureName() then return { bags = {}, bank = {}, mail = {}, profs = {} } end   -- not saved
+    -- nothing is saved until login, when old records have been moved across
+    if not (loggedIn and EnsureName()) then return { bags = {}, bank = {}, mail = {}, profs = {} } end
     local t = Alts.RealmTable()
     local me = t[NAME]
     if not me then
@@ -86,16 +105,15 @@ function Alts.MyName() return NAME end
 -- Shown name: first name + last initial ("Jaseone B.") when the last name is
 -- known, else the first name.
 function Alts.Display(name)
-    local data = name and Alts.RealmTable()[name]
-    local sur = data and data.surname
-    if not sur and data and data.full and data.full ~= name then
-        sur = data.full:sub(#name + 2)
-    end
+    if not name then return name end
+    local data = Alts.RealmTable()[name]
+    local first, sur = SplitName((data and data.full) or name)
+    if not sur and data and data.surname then sur = data.surname end
     if sur and sur ~= "" then
         local initial = sur:match("^[%z\1-\127\194-\244][\128-\191]*") or sur:sub(1, 1)
-        return name .. " " .. initial .. "."
+        return first .. " " .. initial .. "."
     end
-    return name
+    return first
 end
 
 -- What mail is addressed to: the full name ("First Last") when known.
@@ -105,27 +123,86 @@ function Alts.MailName(name)
 end
 
 function Alts.HasFullName(name)
-    local data = name and Alts.RealmTable()[name]
-    return data and data.full and data.full ~= name or false
+    if not name then return false end
+    local data = Alts.RealmTable()[name]
+    local _, sur = SplitName((data and data.full) or name)
+    return sur ~= nil
 end
 
 -- Last names JaseQoL hasn't seen yet, borrowed from EllesmereUI: it records
 -- every character's full name ("First Last") when that character logs in.
+-- An old first-name-only record only takes a last name when exactly one of
+-- your characters has that first name.
 function Alts.LearnNames()
     local db = EllesmereUIDB
     local chars = type(db) == "table" and type(db.chars) == "table" and db.chars
     if not chars then return end
     local realm = Alts.RealmTable()
+    local byFirst = {}
     for _, c in pairs(chars) do
         local full = type(c) == "table" and c.name
         if type(full) == "string" then
-            local first, rest = full:match("^(%S+)%s+(.+)$")
-            local data = first and realm[first]
-            if data and not (data.full and data.full ~= first) then
-                data.full = full
-                data.surname = rest
+            local first, rest = SplitName(full)
+            if rest then
+                local list = byFirst[first] or {}
+                byFirst[first] = list
+                local dup
+                for _, f in ipairs(list) do if f == full then dup = true end end
+                if not dup then list[#list + 1] = full end
             end
         end
+    end
+    for first, list in pairs(byFirst) do
+        local data = realm[first]
+        if data and #list == 1 and not (data.full and data.full ~= first) then
+            data.full = list[1]
+            data.surname = select(2, SplitName(list[1]))
+        end
+    end
+end
+
+-- Older versions filed characters under the first name only. Move each such
+-- record whose full name is known to its full name, along with everything
+-- that points at it (Send mats setup, requests, the inventory filter, who can
+-- craft what). The character logging in claims a first-name record that has
+-- no last name yet when the first name is theirs.
+local function RenameRefs(realmName, old, new)
+    local function move(t)
+        if type(t) == "table" and t[old] ~= nil and t[new] == nil then t[new] = t[old]; t[old] = nil end
+    end
+    local bm = JaseQoLDB.bankMail
+    if bm then
+        move(bm.receives and bm.receives[realmName])
+        if bm.lastAlt == old then bm.lastAlt = new end
+    end
+    local ar = JaseQoLDB.altRequest
+    move(ar and ar.requests and ar.requests[realmName])
+    move(JaseQoLDB.altInventory and JaseQoLDB.altInventory.only)
+    for _, rec in pairs(JaseQoLDB.recipeIndex or {}) do move(type(rec) == "table" and rec.by) end
+end
+
+function Alts.MigrateNames()
+    local realmName = Alts.Realm()
+    local realm = Alts.RealmTable(realmName)
+    if NAME then
+        local first, sur = SplitName(NAME)
+        local old = realm[first]
+        if sur and old and not realm[NAME] and (not old.full or old.full == first) then
+            old.full, old.surname = NAME, sur
+        end
+    end
+    local moves = {}
+    for key, data in pairs(realm) do
+        local full = type(data) == "table" and data.full
+        if type(full) == "string" and full ~= key and SplitName(full) == key
+            and select(2, SplitName(full)) and realm[full] == nil then
+            moves[#moves + 1] = { key, full }
+        end
+    end
+    for _, m in ipairs(moves) do
+        realm[m[2]] = realm[m[1]]
+        realm[m[1]] = nil
+        RenameRefs(realmName, m[1], m[2])
     end
 end
 
@@ -273,11 +350,6 @@ local function ScanProfessions()
     me.profs = profs
 end
 
--- WoW Forever characters have a last name: UnitName returns it second.
--- Mail is addressed by the full name there ("First Last").
-local SEP = (Constants and Constants.CharacterNameSeparatorConsts
-    and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR) or " "
-
 local function Identity()
     local me = Alts.Me()
     local first, surname = (UnitNameUnmodified or UnitName)("player")
@@ -379,12 +451,20 @@ ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
     -- at login, read who we are afresh
     if event == "PLAYER_LOGIN" then NAME = nil end
-    -- nothing to file anything under until the game knows who we are
+    -- nothing to file anything under until the game knows who we are, and
+    -- nothing saved before login (old records are moved across first)
     if not EnsureName() then return end
-    if event == "PLAYER_LOGIN" then
-        Identity(); ScanProfessions(); ScanBags(); RecordLocation()
+    -- (also when Alt tracking is switched on after login)
+    if event == "PLAYER_LOGIN" or (not loggedIn and IsLoggedIn and IsLoggedIn()) then
         pcall(Alts.LearnNames)
-    elseif event == "SKILL_LINES_CHANGED" or event == "TRADE_SKILL_SHOW" then
+        pcall(Alts.MigrateNames)
+        loggedIn = true
+        Identity(); ScanProfessions(); ScanBags(); RecordLocation()
+        if event == "PLAYER_LOGIN" then return end
+    elseif not loggedIn then
+        return
+    end
+    if event == "SKILL_LINES_CHANGED" or event == "TRADE_SKILL_SHOW" then
         ScanProfessions()
     elseif event == "PLAYER_LEVEL_UP" then
         Identity()

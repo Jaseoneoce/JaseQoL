@@ -1065,8 +1065,10 @@ ev:SetScript("OnEvent", function(_, event, ...)
             for _, j in ipairs(jobs) do
                 local n, bank = 0, false
                 for _, e in pairs(j.items) do n = n + (e.bags or 0) + (e.bank or 0); if (e.bank or 0) > 0 then bank = true end end
-                JQ.Print(("Job: send %d item(s) to %s%s. The Requests tab has the list."):format(
-                    n, Alts.Display(j.to), bank and " (some are in your bank)" or ""))
+                local line = ("Job: send %d item(s) to %s%s"):format(
+                    n, Alts.Display(j.to), bank and " (some are in your bank)" or "")
+                if not line:find("%.$") then line = line .. "." end
+                JQ.Print(line .. " The Requests tab has the list.")
             end
             -- open the Requests tab straight away (not in combat, not over another JaseQoL tab)
             if not InCombatLockdown() and not (JQ.Hub.IsOpen and JQ.Hub.IsOpen()) then
