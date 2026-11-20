@@ -90,12 +90,14 @@ local function RequestOf(recipient, create)
 end
 
 -- {[id] = still needed} for a recipient
+local IsVendor   -- forward (vendor list below): vendor items are never requested
+
 local function Remaining(recipient)
     local r = RequestOf(recipient)
     local out = {}
     for id, e in pairs(r and r.items or {}) do
         local left = (e.need or 0) - (e.sent or 0)
-        if left > 0 then out[id] = left end
+        if left > 0 and not IsVendor(id) then out[id] = left end
     end
     return out
 end
@@ -104,7 +106,8 @@ local function Tidy(recipient)
     local r = RequestOf(recipient)
     if not r then return end
     for id, e in pairs(r.items) do
-        if (e.need or 0) - (e.sent or 0) <= 0 then r.items[id] = nil end
+        -- done, or something you buy from a vendor (requests made before that rule)
+        if (e.need or 0) - (e.sent or 0) <= 0 or IsVendor(id) then r.items[id] = nil end
     end
     if not next(r.items) then RealmRequests()[recipient] = nil end
 end
@@ -112,7 +115,7 @@ end
 local function AddRequest(recipient, wants, label)
     local r = RequestOf(recipient, true)
     for id, n in pairs(wants) do
-        if n > 0 then
+        if n > 0 and not IsVendor(id) then
             local e = r.items[id] or { need = 0, sent = 0 }
             e.need = e.need + n
             r.items[id] = e
@@ -660,7 +663,7 @@ for _, id in ipairs({
     2928, 2930, 5173, 8923, 8924,                                 -- poison reagents
 }) do VENDOR[id] = true end
 
-local function IsVendor(id)
+function IsVendor(id)
     return VENDOR[id] or (JaseQoLDB.vendorItems and JaseQoLDB.vendorItems[id]) or false
 end
 
@@ -1002,6 +1005,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
     if event == "MERCHANT_SHOW" or event == "MERCHANT_UPDATE" then
         pcall(LearnVendor)
+        for recipient in pairs(RealmRequests()) do Tidy(recipient) end
         return
     elseif event == "TRADE_SKILL_LIST_UPDATE" then
         C_Timer.After(0.3, function() pcall(ScanRecipes) end)
@@ -1051,6 +1055,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
     elseif event == "MAIL_FAILED" then
         if job then ClearSendMail(); FinishSend("The mail failed: stopped.") end
     elseif event == "PLAYER_LOGIN" then
+        for recipient in pairs(RealmRequests()) do Tidy(recipient) end
         C_Timer.After(3, function()
             local jobs = MyJobs()
             if #jobs == 0 then return end
