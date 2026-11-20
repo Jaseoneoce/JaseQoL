@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## AllowLoadGameType: camelot
 ## Title: |cff0cd29fJaseQoL|r
-## Notes: XP level colours, Dungeon Journal skin and new view, alt inventory and tooltips, send mats to bank alts, BoE sell warning, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
+## Notes: XP level colours, Dungeon Journal skin and new view, alt inventory and tooltips, send and request mats between alts, BoE sell warning, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
 ## Author: jasone
 ## X-AI-Assisted: Built with AI assistance (Claude Code, Anthropic); directed and tested by Jase
 ## X-Website: https://github.com/Jaseoneoce/JaseQoL
