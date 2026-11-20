@@ -23,6 +23,7 @@ Modules\AltData.lua
 Modules\AltInventory.lua
 Modules\BankMail.lua
 Modules\AltRequest.lua
+Modules\ProfessionsResize.lua
 Modules\BoEGuard.lua
 Modules\MastercraftSkin.lua
 Modules\GuildOSSkin.lua

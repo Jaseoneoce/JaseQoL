@@ -15,6 +15,7 @@ local GROUPS = {
     { "Alts, bank & mail", { "altTracker", "altTooltip", "altInventory", "bankMail", "altRequest" } },
     { "Unit frames & nameplates", { "xpLevelColor" } },
     { "Skins", { "mcSkin", "gosSkin" } },
+    { "Professions", { "profResize" } },
     { "Other", { "boeGuard", "hubButton" } },
 }
 local SLASH = {
