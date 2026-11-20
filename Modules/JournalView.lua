@@ -431,6 +431,103 @@ local function QuestsFor(d, dungeonName)
     return out, done
 end
 
+-------------------------------------------------------------------------------
+--  Party check: the game says who has a quest in their log; party members who
+--  run JaseQoL too answer with done / in log / not started (addon messages).
+-------------------------------------------------------------------------------
+local PARTY_PREFIX = "JaseQoL"
+local party = {}            -- [first name] = { [questID] = "d" | "l" | "n" }
+local partyAskedAt = 0
+local PartyRefresh          -- set by the window (redraw after answers)
+if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+    pcall(C_ChatInfo.RegisterAddonMessagePrefix, PARTY_PREFIX)
+end
+
+local function FirstName(n) return n and (tostring(n):gsub("%-.*$", ""):match("^(%S+)")) end
+
+local function PartyMembers()
+    local out = {}
+    if not IsInGroup or not IsInGroup() then return out end
+    for i = 1, (GetNumSubgroupMembers and GetNumSubgroupMembers() or 0) do
+        local unit = "party" .. i
+        local name = UnitName(unit)
+        if name then out[#out + 1] = { unit = unit, name = FirstName(name) } end
+    end
+    return out
+end
+
+local function PartySend(msg)
+    if not (IsInGroup and IsInGroup() and C_ChatInfo and C_ChatInfo.SendAddonMessage) then return end
+    pcall(C_ChatInfo.SendAddonMessage, PARTY_PREFIX, msg, (IsInRaid and IsInRaid()) and "RAID" or "PARTY")
+end
+
+-- "Q?" / "Q=" + comma list, split under the 255-byte message limit
+local function PartySendList(tag, items)
+    local buf = tag
+    for _, it in ipairs(items) do
+        if #buf + #it + 1 > 240 then PartySend(buf); buf = tag end
+        buf = buf .. (buf == tag and "" or ",") .. it
+    end
+    if buf ~= tag then PartySend(buf) end
+end
+
+local QuestDone, QuestInLog = QuestDone, QuestInLog
+
+-- state for a party member: "d" / "l" / "n", or nil when unknown; known = from JaseQoL
+local function PartyState(m, id)
+    local t = party[m.name]
+    if t and t[id] then return t[id], true end
+    if m.unit and C_QuestLog and C_QuestLog.IsUnitOnQuest then
+        local ok, v = pcall(C_QuestLog.IsUnitOnQuest, m.unit, id)
+        if ok and v then return "l", false end
+    end
+    return nil, false
+end
+
+local function PartyAsk(ids)
+    if #PartyMembers() == 0 then return false end
+    local list = {}
+    for _, id in ipairs(ids) do if id and id > 0 then list[#list + 1] = tostring(id) end end
+    if #list == 0 then return false end
+    partyAskedAt = GetTime()
+    PartySendList("Q?", list)
+    return true
+end
+
+local partyEv = CreateFrame("Frame")
+partyEv:RegisterEvent("CHAT_MSG_ADDON")
+partyEv:SetScript("OnEvent", function(_, _, prefix, msg, _, sender)
+    if prefix ~= PARTY_PREFIX or type(msg) ~= "string" then return end
+    local who = FirstName(Ambiguate and Ambiguate(sender or "", "short") or sender)
+    if not who or who == FirstName(UnitName("player")) then return end
+    local tag, body = msg:sub(1, 2), msg:sub(3)
+    if tag == "Q?" then
+        if not (FDJ and QuestDone) then return end
+        local out = {}
+        for id in body:gmatch("%-?%d+") do
+            id = tonumber(id)
+            local st = QuestDone(id) and "d" or (QuestInLog(id) and "l" or "n")
+            out[#out + 1] = id .. ":" .. st
+        end
+        PartySendList("Q=", out)
+    elseif tag == "Q=" then
+        party[who] = party[who] or {}
+        for id, st in body:gmatch("(%-?%d+):(%a)") do party[who][tonumber(id)] = st end
+        if PartyRefresh then PartyRefresh() end
+    end
+end)
+
+local STATE_HEX = { d = "59d959", l = "ffd233", n = "7f7f85" }
+-- "Bob Sue Tim" coloured by state for one quest
+local function PartyNames(id)
+    local parts = {}
+    for _, m in ipairs(PartyMembers()) do
+        local st = PartyState(m, id)
+        parts[#parts + 1] = ("|cff%s%s|r"):format(st and STATE_HEX[st] or "ffffff", m.name)
+    end
+    return table.concat(parts, " ")
+end
+
 -- Quest by id across a dungeon (main list + hidden + side chains).
 local function FindQuest(d, dungeonName, id)
     for _, q in ipairs(d.quests or {}) do if q.id == id then return q end end
@@ -931,6 +1028,18 @@ local function Measure(text, width, size)
     return math.ceil(measure:GetStringHeight())
 end
 
+-- Colours by kind of line: label colour, and the colour of its plain text.
+local LABEL_HEX = {
+    ["You need"] = "ffb24d", ["Starts from"] = "ffd25a", ["Given"] = "59d959", ["Gives"] = "59d959",
+    ["Note"] = "ffd25a", ["Rewards"] = "59d959", ["Start"] = "8fc8ff", ["Turn in"] = "8fc8ff",
+    ["Optional"] = "c0a0ff", ["Summon"] = "ff5a4a", ["Party"] = "8fb8ff", ["Progress"] = "0bd29d",
+}
+local TEXT_RGB = {
+    ["Note"] = { 1, 0.92, 0.66 }, ["Start"] = { 0.74, 0.86, 1 }, ["Turn in"] = { 0.74, 0.86, 1 },
+    ["Rewards"] = { 0.68, 0.92, 0.68 }, ["Optional"] = { 0.86, 0.8, 1 },
+}
+local DESC_HEX = { ["You need"] = "ffcc88", ["Starts from"] = "ffe0a0", ["Given"] = "a8e6a8", ["Gives"] = "a8e6a8" }
+
 local function LineText(line)
     if line.custom then
         return (line.text or "") .. (line.owned and "  |cff59d959(you have it)|r" or "")
@@ -940,7 +1049,7 @@ local function LineText(line)
         local r, g, b = QualityColor(it[3])
         local s = ("|cff%02x%02x%02x%s|r"):format(r * 255, g * 255, b * 255, it[2] or "?")
         local desc = ItemDesc(it)
-        if desc then s = s .. "  |cff9e9ea8" .. desc .. "|r" end
+        if desc then s = s .. "  |cff" .. (DESC_HEX[line.label] or "9e9ea8") .. desc .. "|r" end
         return s
     end
     return line.text or ""
@@ -1002,8 +1111,44 @@ local function QuestLines(q, dungeonName, d, rowWidth)
               map = starts[link.id], mapText = "Show on map", qid = link.id, title = link.name })
     end
 
+    -- Party: where each member is (whole chain when there is one)
+    local members = PartyMembers()
+    local chainForParty = FullChain(q)
+    local at = {}   -- [step index] = { names }
+    if #members > 0 then
+        local ids = {}
+        for _, st in ipairs(chainForParty or {}) do ids[#ids + 1] = st.id end
+        ids[#ids + 1] = q.id
+        local parts = {}
+        for _, m in ipairs(members) do
+            local where, col = nil, "ffffff"
+            local allKnown = true
+            for i, id in ipairs(ids) do
+                local st, known = PartyState(m, id)
+                if not known then allKnown = false end
+                if st == "l" then
+                    where, col = (#ids > 1 and ("in log, step %d of %d"):format(i, #ids) or "in log"), STATE_HEX.l
+                    at[i] = at[i] or {}; table.insert(at[i], m.name)
+                    break
+                elseif st ~= "d" and known then
+                    where, col = (#ids > 1 and ("needs step %d of %d"):format(i, #ids) or "not started"), STATE_HEX.n
+                    at[i] = at[i] or {}; table.insert(at[i], m.name)
+                    break
+                end
+            end
+            if not where then
+                local st = PartyState(m, q.id)
+                if st == "d" then where, col = "done", STATE_HEX.d
+                elseif allKnown then where, col = "done", STATE_HEX.d
+                else where = "unknown (no JaseQoL)" end
+            end
+            parts[#parts + 1] = ("|cff%s%s|r |cff9e9ea8%s|r"):format(col, m.name, where)
+        end
+        add({ label = "Party", text = table.concat(parts, "  •  ") })
+    end
+
     -- Prerequisite chain: steps in order, then this quest.
-    local chain = FullChain(q)
+    local chain = chainForParty
     if chain then
         local nDone, nextIdx = 0, nil
         for i, step in ipairs(chain) do
@@ -1019,6 +1164,7 @@ local function QuestLines(q, dungeonName, d, rowWidth)
             local inLog = not done and QuestInLog(step.id)
             local txt = i .. ". " .. (step.name or "?")
             if step.summon then txt = txt .. "  |cff8fb8ff(to summon the boss)|r" end
+            if at[i] then txt = txt .. "  |cff8fb8ff<- " .. table.concat(at[i], ", ") .. "|r" end
             if isNext then
                 txt = ("|cff%s%s  (%s)|r"):format(accentHex, txt, inLog and "in your log" or "next")
                 local prog = inLog and QuestProgress(step.id)
@@ -1050,7 +1196,8 @@ local function QuestLines(q, dungeonName, d, rowWidth)
                 end
             end
         end
-        add({ step = true, done = QuestDone(q.id), inLog = QuestInLog(q.id), text = (#chain + 1) .. ". " .. (q.name or "?") .. "  |cff9e9ea8(this quest)|r" })
+        add({ step = true, done = QuestDone(q.id), inLog = QuestInLog(q.id), text = (#chain + 1) .. ". " .. (q.name or "?") .. "  |cff9e9ea8(this quest)|r"
+            .. (at[#chain + 1] and ("  |cff8fb8ff<- " .. table.concat(at[#chain + 1], ", ") .. "|r") or "") })
     end
 
     if q.rewards and q.rewards ~= "" then
@@ -1181,6 +1328,7 @@ local QuestRow = {
         elseif nextStep and nextStep.summon then
             extra = extra .. ("  •  |cff8fb8ffNeeds %s to summon|r"):format(nextStep.page or nextStep.name or "?")
         end
+        if q.id and #PartyMembers() > 0 then extra = extra .. "  •  Party: " .. PartyNames(q.id) end
         row.sub:SetText(("Level %s  •  Requires %s%s"):format(q.level or "?", q.requires or "?", extra))
         local statusText = lbl[1]
         if st == "low" then
@@ -1219,7 +1367,12 @@ local QuestRow = {
                 f:SetPoint("TOPLEFT", row, "TOPLEFT", LINE_LEFT, y)
                 f:SetPoint("RIGHT", row, "RIGHT", -12, 0)
                 f:SetHeight(l.height)
-                f.label:SetText(l.label or "")
+                local lh = l.label and LABEL_HEX[l.label]
+                if l.label == "Progress" then
+                    local ar, ag, ab = Accent()
+                    lh = ("%02x%02x%02x"):format(ar * 255, ag * 255, ab * 255)
+                end
+                f.label:SetText(l.label and (lh and ("|cff" .. lh .. l.label .. "|r") or l.label) or "")
                 f.label:SetShown(l.label ~= nil)
                 local x = l.label and LABEL_W or 0
                 local iconTex
@@ -1245,7 +1398,8 @@ local QuestRow = {
                     f.icon:Hide()
                 end
                 SetF(f.text, 12)
-                f.text:SetTextColor(0.86, 0.86, 0.88)
+                local tc = l.label and TEXT_RGB[l.label]
+                if tc then f.text:SetTextColor(tc[1], tc[2], tc[3]) else f.text:SetTextColor(0.86, 0.86, 0.88) end
                 f.text:ClearAllPoints()
                 f.text:SetPoint("TOPLEFT", x, -2)
                 f.text:SetWidth(TextWidth(l, data.width))
@@ -1414,6 +1568,7 @@ local function UpdateHeader()
     win.chipOwned:SetShown(state.tab == "loot")
     win.chipDone:SetShown(state.tab == "quests")
     win.chipFaction:SetShown(state.tab == "quests")
+    win.chipParty:SetShown(state.tab == "quests" and #PartyMembers() > 0)
     win.chipFaction:SetOn(state.bothFactions)
     win.chipBoss:SetShown(state.tab == "loot" and state.boss ~= nil)
     win.chipUsable:SetOn(state.usable)
@@ -1473,6 +1628,7 @@ function SelectDungeon(name)
 end
 
 function SelectTab(key)
+    if key == "quests" and win and win.AskParty then win.AskParty(false) end
     state.tab = key
     if key ~= "loot" then state.boss = nil end
     Refresh("content")
@@ -1666,6 +1822,40 @@ local function Build()
     win.chipDone:SetPoint("RIGHT", tabBar, "RIGHT", 0, 1)
     win.chipFaction = Chip("Both factions", "bothFactions")
     win.chipFaction:SetPoint("RIGHT", win.chipDone, "LEFT", -6, 0)
+    win.chipParty = FlatButton(tabBar, "Party check", 100, 22)
+    win.chipParty:SetPoint("RIGHT", win.chipFaction, "LEFT", -6, 0)
+    win.chipParty:SetScript("OnClick", function()
+        if not win.AskParty(true) then JQ.Print("Party check: you're not in a party.") end
+    end)
+    win.chipParty:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Party check", 1, 1, 1)
+        GameTooltip:AddLine("Who in your party has these quests. Names are coloured:", 0.85, 0.85, 0.88, true)
+        GameTooltip:AddLine("|cff59d959done|r  |cffffd233in their log|r  |cff7f7f85not started|r  |cffffffffunknown|r", 1, 1, 1)
+        GameTooltip:AddLine("Done and chain steps come from party members who also run JaseQoL; for others the game only tells \"in their log\".", 0.62, 0.62, 0.66, true)
+        GameTooltip:Show()
+    end)
+    win.chipParty:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- Every quest of this dungeon and its chains, for the party check.
+    function win.AskParty(force)
+        if not force and GetTime() - partyAskedAt < 30 then return true end
+        local d = FDJ.DB[state.dungeon]
+        if not d then return false end
+        local ids, seen = {}, {}
+        local function add(id) if id and not seen[id] then seen[id] = true; ids[#ids + 1] = id end end
+        for _, e in ipairs(QuestsFor(d, state.dungeon)) do
+            add(e.q.id)
+            for _, st in ipairs(FullChain(e.q) or {}) do add(st.id) end
+            if e.q.noteQuestLink then add(e.q.noteQuestLink.id) end
+        end
+        local ok = PartyAsk(ids)
+        if ok and force then JQ.Print("Party check sent. Party members with JaseQoL answer in a moment.") end
+        return ok
+    end
+    PartyRefresh = function()
+        if win:IsShown() and state.tab == "quests" then Refresh("content", true) end
+    end
     win.chipBoss = FlatButton(tabBar, "", 120, 22)
     win.chipBoss:SetPoint("RIGHT", win.chipUsable, "LEFT", -6, 0)
     win.chipBoss:SetScript("OnClick", function()
@@ -1703,7 +1893,8 @@ local function Build()
         end)
     end)
     win:SetScript("OnShow", function()
-        for _, e in ipairs({ "QUEST_LOG_UPDATE", "QUEST_TURNED_IN", "BAG_UPDATE_DELAYED", "PLAYER_LEVEL_UP" }) do
+        if state.tab == "quests" and win.AskParty then win.AskParty(false) end
+        for _, e in ipairs({ "QUEST_LOG_UPDATE", "QUEST_TURNED_IN", "BAG_UPDATE_DELAYED", "PLAYER_LEVEL_UP", "GROUP_ROSTER_UPDATE" }) do
             pcall(ev.RegisterEvent, ev, e)
         end
         Refresh()

@@ -7,8 +7,10 @@ JaseQoL is built with AI assistance: written with Claude Code (Anthropic), direc
 ### New
 - **Request mats from alts** - in your profession window, a side panel shows the selected recipe's reagents for N crafts (need / have / on your alts); **Request** asks your alts for what's missing. JaseQoL plans who sends what (fewest logins, alts parked in a bank town, bags before bank) and gives each alt a job in the new **Requests** tab: **Pull from bank** takes out exactly what's needed, **Send** mails exactly that to you. Right-click a requested item to keep some on each alt. The Requests tab opens by itself when you log in on an alt with a job. Works with the modern profession window (the panel sits on its left, starts from the game's craft count, and can be dragged and resized). Vendor-bought reagents (thread, dyes, vials, flux...) are shown as "vendor" and never requested; JaseQoL also learns what each vendor you visit sells. **Drill-down**: when nobody has enough of a reagent you can make (Bolt of Linen Cloth), it requests that recipe's reagents instead (Linen Cloth), up to three levels down; recipes are learned when you open a profession window.
 - **Resizable profession window** - drag the grip in the profession window's bottom-right corner to make it bigger; it stays that size. Right-click the grip to reset.
+- **Party check** in the Dungeon Journal's Quests tab: party names on each quest coloured by status (done / in log / not started), and where each member is in a quest chain ("<- Bob" on the step they're at). Party members who run JaseQoL share done and chain progress; for others the game tells whether it's in their log. Checks by itself when you open Quests in a group, or press Party check.
 
 ### Changed
+- Dungeon Journal quest details are coloured by kind: items you need (orange), start-from items (gold), items given and rewards (green), notes (yellow), start / turn-in places (blue), optional quests (purple).
 - Alt tracking remembers where each character is parked and learns which towns have a bank.
 
 ### Fixed
