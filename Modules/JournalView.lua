@@ -1040,6 +1040,22 @@ local TEXT_RGB = {
 }
 local DESC_HEX = { ["You need"] = "ffcc88", ["Starts from"] = "ffe0a0", ["Given"] = "a8e6a8", ["Gives"] = "a8e6a8" }
 
+-- Reward item names in a rewards line become item links (quality coloured),
+-- so hovering one shows its tooltip and shift-click links it in chat.
+local function RewardLinks(text, items)
+    if type(items) ~= "table" then return text end
+    for _, it in ipairs(items) do
+        local id, name = it[1], it[2]
+        if id and type(name) == "string" and name ~= "" then
+            local r, g, b = QualityColor(it[3])
+            local link = ("|cff%02x%02x%02x|Hitem:%d|h%s|h|r"):format(r * 255, g * 255, b * 255, id, name)
+            local s, e = text:find(name, 1, true)
+            if s then text = text:sub(1, s - 1) .. link .. text:sub(e + 1) end
+        end
+    end
+    return text
+end
+
 local function LineText(line)
     if line.custom then
         return (line.text or "") .. (line.owned and "  |cff59d959(you have it)|r" or "")
@@ -1201,7 +1217,7 @@ local function QuestLines(q, dungeonName, d, rowWidth)
     end
 
     if q.rewards and q.rewards ~= "" then
-        add({ label = "Rewards", text = (q.rewards:gsub("\n", "  •  ")) })
+        add({ label = "Rewards", text = RewardLinks(q.rewards:gsub("\n", "  •  "), q.rewardItems), links = true })
     end
     -- (a note that only introduces the linked optional quest is already the Optional line)
     if q.note and q.note ~= "" and not (q.noteQuestLink and q.note:match(":%s*$")) then
@@ -1247,6 +1263,27 @@ local function MakeLine(row)
     f:SetScript("OnLeave", HideTip)
     f:SetScript("OnClick", function(self)
         if self.itemID then ItemClick(self) end
+    end)
+    -- reward item links in the text
+    if f.SetHyperlinksEnabled then f:SetHyperlinksEnabled(true) end
+    f:SetScript("OnHyperlinkEnter", function(self, link)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        if not pcall(GameTooltip.SetHyperlink, GameTooltip, link) then
+            local id = tonumber(tostring(link):match("item:(%d+)"))
+            if id then GameTooltip:SetItemByID(id) end
+        end
+        GameTooltip:Show()
+    end)
+    f:SetScript("OnHyperlinkLeave", HideTip)
+    f:SetScript("OnHyperlinkClick", function(_, link)
+        local id = tonumber(tostring(link):match("item:(%d+)"))
+        local full = id and select(2, GetItemInfoFn(id))
+        if not full then return end
+        if IsModifiedClick("CHATLINK") then
+            ChatEdit_InsertLink(full)
+        elseif IsModifiedClick("DRESSUP") and DressUpItemLink then
+            DressUpItemLink(full)
+        end
     end)
     return f
 end

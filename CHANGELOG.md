@@ -10,6 +10,7 @@ JaseQoL is built with AI assistance: written with Claude Code (Anthropic), direc
 - **Lockpicking** is a Send mats category, for sending lockboxes to a rogue alt (alts with Lockpicking get it by default).
 
 ### Changed
+- Dungeon Journal: reward items in a quest's Rewards line are item links - hover one for its tooltip, shift-click to link it in chat.
 - Send mats: the Jewelcrafting and Inscription tabs are gone (neither is in WoW Forever).
 - Send mats setup: items already assigned to another category show it after their name, e.g. "Jet Black Feather (Leatherworking)".
 
