@@ -2,6 +2,17 @@
 
 JaseQoL is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### New
+- **Lockpicking** is a Send mats category, for sending lockboxes to a rogue alt (alts with Lockpicking get it by default).
+
+### Changed
+- Send mats setup: items already assigned to another category show it after their name, e.g. "Jet Black Feather (Leatherworking)".
+
+### Fixed
+- Bank contents weren't read at all on WoW Forever (its bank is bank tabs): the alt inventory, item tooltips, Send mats and Requests now see what's in each character's bank. Open each bank once to record it.
+
 ## v1.2.0 - 2026-11-20
 
 ### New

@@ -602,7 +602,8 @@ local function BuildSetup()
             row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
             row.name:SetPoint("RIGHT", row.add, "LEFT", -6, 0)
             local name, q = UI.ItemNameQuality(d.id)
-            row.name:SetText(name .. (d.assigned and "  |TInterface\\RaidFrame\\ReadyCheck-Ready:12|t" or ""))
+            row.name:SetText(name .. (d.assigned and "  |TInterface\\RaidFrame\\ReadyCheck-Ready:12|t" or "")
+                .. (d.elsewhere and ("  |cff9e9ea8(" .. d.elsewhere .. ")|r") or ""))
             row.name:SetTextColor(UI.QualityColor(q))
             row.add.text:SetText("+")
         end
@@ -671,7 +672,14 @@ local function BuildSetup()
             table.sort(ids, function(a, b) return UI.ItemNameQuality(a) < UI.ItemNameQuality(b) end)
             rows[#rows + 1] = { header = true, text = g, ids = ids }
             for _, id in ipairs(ids) do
-                rows[#rows + 1] = { id = id, assigned = db.mats[id] and db.mats[id][cat] or false }
+                -- other categories this item is already assigned to
+                local others = {}
+                for c in pairs(db.mats[id] or {}) do
+                    if c ~= cat then others[#others + 1] = c end
+                end
+                table.sort(others)
+                rows[#rows + 1] = { id = id, assigned = db.mats[id] and db.mats[id][cat] or false,
+                    elsewhere = #others > 0 and table.concat(others, ", ") or nil }
             end
         end
         self.bags:SetItems(rows, true)

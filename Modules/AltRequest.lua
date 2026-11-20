@@ -1035,8 +1035,11 @@ ev:SetScript("OnEvent", function(_, event, ...)
         mailOpen = false
         if job then FinishSend("Mailbox closed: stopped.") end
         if win and win:IsShown() then win:Refresh() end
-    elseif event == "BANKFRAME_OPENED" then
+    elseif event == "BANKFRAME_OPENED" or (event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW"
+        and Enum and Enum.PlayerInteractionType and (... == Enum.PlayerInteractionType.Banker
+        or ... == Enum.PlayerInteractionType.CharacterBanker)) then
         if HasJobs() then C_Timer.After(0.2, function() JQ.Hub.Show("requests") end) end
+        if win and win:IsShown() then C_Timer.After(0.2, function() win:Refresh() end) end
     elseif event == "BANKFRAME_CLOSED" then
         if win and win:IsShown() then win:Refresh() end
     elseif event == "BAG_UPDATE_DELAYED" then
@@ -1137,7 +1140,7 @@ JQ.byKey[KEY].onLoad = function()
     for _, e in ipairs({ "PLAYER_LOGIN", "TRADE_SKILL_SHOW", "TRADE_SKILL_CLOSE", "TRADE_SKILL_UPDATE",
         "TRADE_SKILL_LIST_UPDATE", "MERCHANT_SHOW", "MERCHANT_UPDATE",
         "CRAFT_SHOW", "CRAFT_CLOSE", "CRAFT_UPDATE", "MAIL_SHOW", "MAIL_CLOSED", "MAIL_SEND_SUCCESS", "MAIL_FAILED",
-        "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED" }) do
+        "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED", "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" }) do
         pcall(ev.RegisterEvent, ev, e)
     end
     Alts.OnChange(function() if win and win:IsShown() then win:Refresh() end end)

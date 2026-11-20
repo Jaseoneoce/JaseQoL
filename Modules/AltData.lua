@@ -39,7 +39,7 @@ local REALM, NAME
 Alts.PROFESSIONS = {
     "Alchemy", "Blacksmithing", "Enchanting", "Engineering", "Herbalism", "Jewelcrafting",
     "Inscription", "Leatherworking", "Mining", "Skinning", "Tailoring",
-    "Cooking", "First Aid", "Fishing",
+    "Cooking", "First Aid", "Fishing", "Lockpicking",
 }
 local IS_PROF = {}
 for _, p in ipairs(Alts.PROFESSIONS) do IS_PROF[p] = true end
@@ -188,7 +188,17 @@ function Alts.BagIDs()
 end
 
 function Alts.BankIDs()
-    local ids = { (Enum and Enum.BagIndex and Enum.BagIndex.Bank) or BANK_CONTAINER or -1 }
+    -- WoW Forever (new engine): the character bank is bank tabs, CharacterBankTab_1.._9
+    local BI = Enum and Enum.BagIndex
+    if BI and BI.CharacterBankTab_1 then
+        local ids = {}
+        for i = 1, 9 do
+            local id = BI["CharacterBankTab_" .. i]
+            if id then ids[#ids + 1] = id end
+        end
+        return ids
+    end
+    local ids = { (BI and BI.Bank) or BANK_CONTAINER or -1 }
     local first = (NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4) + 1
     for b = first, first + (NUM_BANKBAGSLOTS or 7) - 1 do ids[#ids + 1] = b end
     return ids
@@ -365,7 +375,7 @@ local function QueueBags()
     end)
 end
 
-ev:SetScript("OnEvent", function(_, event)
+ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
     -- at login, read who we are afresh
     if event == "PLAYER_LOGIN" then NAME = nil end
@@ -385,6 +395,18 @@ ev:SetScript("OnEvent", function(_, event)
         bankOpen = true; RecordLocation(); LearnBankTown(); ScanBank(); Alts.Changed()
     elseif event == "BANKFRAME_CLOSED" then
         bankOpen = false
+    elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" or event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" then
+        local kind = ...
+        local PIT = Enum and Enum.PlayerInteractionType
+        if PIT and (kind == PIT.Banker or kind == PIT.CharacterBanker) then
+            if event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" then
+                if not bankOpen then
+                    bankOpen = true; RecordLocation(); LearnBankTown(); ScanBank(); Alts.Changed()
+                end
+            else
+                bankOpen = false
+            end
+        end
     elseif event == "MAIL_INBOX_UPDATE" or event == "MAIL_SHOW" then
         ScanMail(); Alts.Changed()
     else
@@ -398,6 +420,7 @@ JQ.byKey[KEY].onLoad = function()
     for _, e in ipairs({ "PLAYER_LOGIN", "SKILL_LINES_CHANGED", "TRADE_SKILL_SHOW", "PLAYER_LEVEL_UP",
         "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "PLAYER_LOGOUT",
         "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "MAIL_SHOW", "MAIL_INBOX_UPDATE",
+        "PLAYER_INTERACTION_MANAGER_FRAME_SHOW", "PLAYER_INTERACTION_MANAGER_FRAME_HIDE",
         "BAG_UPDATE_DELAYED", "PLAYERBANKSLOTS_CHANGED", "PLAYERBANKBAGSLOTS_CHANGED" }) do
         pcall(ev.RegisterEvent, ev, e)
     end
