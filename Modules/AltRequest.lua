@@ -556,9 +556,49 @@ JQ.Hub.Register({
 -------------------------------------------------------------------------------
 local side
 
+-- The modern profession window (ProfessionsFrame, which WoW Forever uses):
+-- the recipe its form shows, and that recipe's basic reagents.
+local function ModernForm()
+    local page = ProfessionsFrame and ProfessionsFrame:IsShown() and ProfessionsFrame.CraftingPage
+    local form = page and page:IsShown() and page.SchematicForm
+    return form, page
+end
+
+local function ModernReagents()
+    local form = ModernForm()
+    if not (form and form.GetRecipeInfo) then return nil end
+    local ok, info = pcall(form.GetRecipeInfo, form)
+    if not (ok and info and info.recipeID) then return nil end
+    local T = C_TradeSkillUI
+    local schematic = T and T.GetRecipeSchematic and T.GetRecipeSchematic(info.recipeID, false)
+    local list = {}
+    for _, slot in ipairs(schematic and schematic.reagentSlotSchematics or {}) do
+        local basic = not (Enum and Enum.CraftingReagentType) or slot.reagentType == Enum.CraftingReagentType.Basic
+        local reagent = slot.reagents and slot.reagents[1]
+        if basic and reagent and reagent.itemID then
+            list[#list + 1] = { id = reagent.itemID, per = slot.quantityRequired or 1 }
+        end
+    end
+    return info.name or (schematic and schematic.name), list, info.recipeID
+end
+
+-- The game's own "how many" box under the recipe, if there is one.
+local function GameCraftCount()
+    local _, page = ModernForm()
+    local box = page and page.CreateMultipleInputBox
+    if box and box.GetValue then
+        local ok, v = pcall(box.GetValue, box)
+        if ok and tonumber(v) then return tonumber(v) end
+    end
+    if TradeSkillInputBox and TradeSkillInputBox.GetNumber then return TradeSkillInputBox:GetNumber() end
+end
+
 local function Reagents()
     -- returns recipeName, { {id, perCraft}, ... }
     local list = {}
+    if ProfessionsFrame and ProfessionsFrame:IsShown() then
+        return ModernReagents()
+    end
     if CraftFrame and CraftFrame:IsShown() and GetCraftSelectionIndex then
         local i = GetCraftSelectionIndex()
         if not i or i == 0 then return nil end
@@ -605,7 +645,9 @@ end
 
 local function BuildSide(parent)
     side = CreateFrame("Frame", "JaseQoLRequestPanel", UIParent)
-    side:SetSize(260, 300)
+    side:SetSize((db.sideSize and db.sideSize[1]) or 260, (db.sideSize and db.sideSize[2]) or 300)
+    side:SetResizable(true)
+    if side.SetResizeBounds then side:SetResizeBounds(240, 220, 700, 800) end
     side:SetFrameStrata("HIGH")
     UI.Fill(side, 0.045, 0.045, 0.05, 0.96)
     UI.Border(side)
@@ -648,10 +690,11 @@ local function BuildSide(parent)
     head:SetText("need  have  alts")
 
     side.rows = {}
-    for i = 1, 8 do
+    for i = 1, 20 do
         local r = CreateFrame("Button", nil, side)
-        r:SetSize(240, 22)
+        r:SetHeight(22)
         r:SetPoint("TOPLEFT", 10, -72 - (i - 1) * 24)
+        r:SetPoint("RIGHT", side, "RIGHT", -10, 0)
         r.icon = r:CreateTexture(nil, "ARTWORK")
         r.icon:SetSize(18, 18)
         r.icon:SetPoint("LEFT")
@@ -689,12 +732,33 @@ local function BuildSide(parent)
     open:SetPoint("BOTTOMRIGHT", -10, 10)
     open:SetScript("OnClick", function() JQ.Hub.Show("requests") end)
 
+    local grip = CreateFrame("Button", nil, side)
+    grip:SetSize(14, 14)
+    grip:SetPoint("BOTTOMRIGHT", -2, 2)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function() side:StartSizing("BOTTOMRIGHT") end)
+    grip:SetScript("OnMouseUp", function()
+        side:StopMovingOrSizing()
+        db.sideSize = { side:GetWidth(), side:GetHeight() }
+        local p, _, rp, x, y = side:GetPoint()
+        db.sidePos = { p, rp, x, y }
+        side:Refresh()
+    end)
+    side:SetScript("OnSizeChanged", function(self) if self:IsShown() then self:Refresh() end end)
+
     function side:Place(frame)
         self:ClearAllPoints()
         if db.sidePos then
             self:SetPoint(db.sidePos[1], UIParent, db.sidePos[2], db.sidePos[3], db.sidePos[4])
         else
-            self:SetPoint("TOPLEFT", frame, "TOPRIGHT", -30, -12)
+            if frame == ProfessionsFrame then
+                -- left side: Mastercraft and others put buttons on its right edge
+                self:SetPoint("TOPRIGHT", frame, "TOPLEFT", -6, 0)
+            else
+                self:SetPoint("TOPLEFT", frame, "TOPRIGHT", -30, -12)
+            end
         end
     end
 
@@ -706,8 +770,12 @@ local function BuildSide(parent)
         if n < 1 then n = 1 end
         self.recipe:SetText(name and (name .. "  x" .. n) or "Pick a recipe")
         local short, missing, cover = {}, 0, 0
+        -- as many rows as the panel's height fits (it can be resized)
+        local fits = math.max(1, math.floor((self:GetHeight() - 72 - 76) / 24))
+        local hidden = 0
         for i, r in ipairs(self.rows) do
             local e = list and list[i]
+            if e and i > fits then hidden = hidden + 1; e = nil end
             if e then
                 local need = e.per * n
                 local have, alts = HaveAndAlts(e.id)
@@ -733,7 +801,8 @@ local function BuildSide(parent)
             self.summary:SetText("|cff59d959You have everything for this.|r")
             self.request:SetEnabledLook(false)
         else
-            self.summary:SetText(("Missing %d item(s); your alts can cover %d."):format(missing, cover))
+            self.summary:SetText(("Missing %d item(s); your alts can cover %d."):format(missing, cover)
+                .. (hidden > 0 and ("  |cffffd233(%d more: make the panel taller)|r"):format(hidden) or ""))
             self.request:SetEnabledLook(true)
         end
         self.request.text:SetText(missing > 0 and ("Request " .. missing) or "Request")
@@ -745,7 +814,12 @@ local function BuildSide(parent)
         if self.elapsed < 0.4 then return end
         self.elapsed = 0
         local name = Reagents()
-        if name ~= self.lastName then self.lastName = name; self:Refresh() end
+        if name ~= self.lastName then
+            self.lastName = name
+            local n = GameCraftCount()
+            if n and n > 0 and not self.qty:HasFocus() then self.qty:SetText(tostring(n)) end
+            self:Refresh()
+        end
     end)
 end
 
@@ -765,12 +839,21 @@ end
 -------------------------------------------------------------------------------
 --  Events
 -------------------------------------------------------------------------------
+local profHooked = false
 local function HasJobs() return #MyJobs() > 0 end
 
 ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
     if event == "TRADE_SKILL_SHOW" then
-        C_Timer.After(0, function() ShowSide(TradeSkillFrame) end)
+        C_Timer.After(0, function()
+            local f = (ProfessionsFrame and ProfessionsFrame:IsShown() and ProfessionsFrame) or TradeSkillFrame
+            ShowSide(f)
+            -- the modern window can close without TRADE_SKILL_CLOSE reaching us first
+            if f == ProfessionsFrame and not profHooked then
+                profHooked = true
+                ProfessionsFrame:HookScript("OnHide", HideSide)
+            end
+        end)
     elseif event == "CRAFT_SHOW" then
         C_Timer.After(0, function() ShowSide(CraftFrame) end)
     elseif event == "TRADE_SKILL_CLOSE" or event == "CRAFT_CLOSE" then
