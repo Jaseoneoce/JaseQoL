@@ -451,6 +451,8 @@ local function Rows()
     return rows
 end
 
+local AskKeep   -- forward (defined with the prompt below)
+
 local function Build()
     db.win = db.win or {}
     win = UI.Window("JaseQoLRequests", "Requests", 720, 520, db.win)
@@ -482,7 +484,7 @@ local function Build()
         row:SetScript("OnClick", function(self, mouse)
             local d = self.data
             if mouse == "RightButton" and d and d.itemID then
-                StaticPopup_Show("JASEQOL_KEEP", UI.ItemNameQuality(d.itemID), nil, d.itemID)
+                AskKeep(d.itemID)
             end
         end)
         return row
@@ -820,29 +822,56 @@ ev:SetScript("OnEvent", function(_, event, ...)
 end)
 
 -------------------------------------------------------------------------------
---  Keep amount dialog
+--  Keep amount prompt (JaseQoL's own little box: the game's StaticPopup
+--  system is left alone, so its protected confirmations never get tainted)
 -------------------------------------------------------------------------------
-StaticPopupDialogs = StaticPopupDialogs or {}
-StaticPopupDialogs["JASEQOL_KEEP"] = {
-    text = "Keep at least how many %s on each alt?",
-    button1 = OKAY or "OK", button2 = CANCEL or "Cancel",
-    hasEditBox = true, timeout = 0, whileDead = true, hideOnEscape = true,
-    OnShow = function(self, id)
-        local eb = self.editBox or self.EditBox
-        if eb then eb:SetText(tostring(Keep(id))); eb:HighlightText() end
-    end,
-    OnAccept = function(self, id)
-        local eb = self.editBox or self.EditBox
-        local n = eb and tonumber(eb:GetText())
-        if n then db.keep[id] = n > 0 and math.floor(n) or nil end
-        if win and win:IsShown() then win:Refresh() end
-    end,
-    EditBoxOnEnterPressed = function(self)
-        local parent = self:GetParent()
-        StaticPopupDialogs["JASEQOL_KEEP"].OnAccept(parent, parent.data)
-        parent:Hide()
-    end,
-}
+local prompt
+function AskKeep(id)
+    if not prompt then
+        prompt = CreateFrame("Frame", "JaseQoLKeepPrompt", UIParent)
+        prompt:SetSize(300, 110)
+        prompt:SetPoint("CENTER", 0, 120)
+        prompt:SetFrameStrata("DIALOG")
+        prompt:EnableMouse(true)
+        UI.Fill(prompt, 0.045, 0.045, 0.05, 0.97)
+        UI.Border(prompt)
+        tinsert(UISpecialFrames, "JaseQoLKeepPrompt")
+        prompt.text = UI.Text(prompt, 12, 1, 1, 1, "CENTER")
+        prompt.text:SetPoint("TOPLEFT", 10, -12)
+        prompt.text:SetPoint("TOPRIGHT", -10, -12)
+        prompt.text:SetWordWrap(true)
+        prompt.box = CreateFrame("EditBox", nil, prompt)
+        prompt.box:SetSize(80, 22)
+        prompt.box:SetPoint("TOP", 0, -46)
+        prompt.box:SetAutoFocus(true)
+        prompt.box:SetNumeric(true)
+        prompt.box:SetMaxLetters(5)
+        prompt.box:SetJustifyH("CENTER")
+        UI.SetFont(prompt.box, 12)
+        UI.Fill(prompt.box, 0, 0, 0, 0.5)
+        UI.Border(prompt.box)
+        local function Accept()
+            local n = tonumber(prompt.box:GetText())
+            if n and prompt.itemID then db.keep[prompt.itemID] = n > 0 and math.floor(n) or nil end
+            prompt:Hide()
+            if win and win:IsShown() then win:Refresh() end
+        end
+        prompt.box:SetScript("OnEnterPressed", Accept)
+        prompt.box:SetScript("OnEscapePressed", function() prompt:Hide() end)
+        local ok = UI.Button(prompt, "OK", 90, 22)
+        ok:SetPoint("BOTTOMRIGHT", prompt, "BOTTOM", -4, 10)
+        ok:SetScript("OnClick", Accept)
+        local cancel = UI.Button(prompt, "Cancel", 90, 22)
+        cancel:SetPoint("BOTTOMLEFT", prompt, "BOTTOM", 4, 10)
+        cancel:SetScript("OnClick", function() prompt:Hide() end)
+    end
+    prompt.itemID = id
+    prompt.text:SetText(("Keep at least how many %s on each alt?"):format(UI.ItemNameQuality(id)))
+    prompt.box:SetText(tostring(Keep(id)))
+    prompt:Show()
+    prompt.box:SetFocus()
+    prompt.box:HighlightText()
+end
 
 -------------------------------------------------------------------------------
 --  Load

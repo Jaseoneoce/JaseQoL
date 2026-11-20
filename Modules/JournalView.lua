@@ -1744,6 +1744,9 @@ local function HookOriginal()
     orig._jqHooked = true
     orig:HookScript("OnShow", function(self)
         if allowClassic or not JQ.IsEnabled(KEY) then return end
+        -- The journal window holds action buttons (target / mark the quest
+        -- giver): hiding it in combat is blocked, so in combat it stays as it is.
+        if InCombatLockdown() then return end
         self:Hide()
         Toggle(true)
     end)

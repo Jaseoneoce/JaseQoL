@@ -10,6 +10,9 @@ JaseQoL is built with AI assistance: written with Claude Code (Anthropic), direc
 ### Changed
 - Alt tracking remembers where each character is parked and learns which towns have a bank.
 
+### Fixed
+- "JaseQoL has been blocked from an action only available to the Blizzard UI": the keep-amount box no longer uses the game's popup system, and the Dungeon Journal swap waits until you're out of combat.
+
 ## v1.1.1 - 2026-11-19
 
 ### Changed
