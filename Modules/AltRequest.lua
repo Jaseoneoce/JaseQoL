@@ -643,6 +643,148 @@ local function HaveAndAlts(id)
     return have, alts
 end
 
+-------------------------------------------------------------------------------
+--  Vendor items (never requested) and the recipe index (for drill-down)
+-------------------------------------------------------------------------------
+-- Common reagents sold by vendors; any item a vendor sells unlimited is added
+-- when you open that vendor (JaseQoLDB.vendorItems), so Forever's own count too.
+local VENDOR = {}
+for _, id in ipairs({
+    2320, 2321, 4291, 8343, 14341,                               -- threads
+    2324, 2325, 2604, 2605, 4340, 4341, 4342, 6260, 6261, 10290,  -- bleach, dyes
+    3371, 3372, 8925, 18256,                                      -- vials
+    2880, 3466, 3857,                                             -- flux, coal
+    4289, 2678, 2692, 3713, 17194, 159, 1179, 2596,              -- salt, spices, drinks
+    6217, 4470, 11291,                                            -- rods, wood
+    4399, 4400, 5140, 10647, 10648, 7191,                         -- engineering
+    2928, 2930, 5173, 8923, 8924,                                 -- poison reagents
+}) do VENDOR[id] = true end
+
+local function IsVendor(id)
+    return VENDOR[id] or (JaseQoLDB.vendorItems and JaseQoLDB.vendorItems[id]) or false
+end
+
+local function LearnVendor()
+    if not (GetMerchantNumItems and GetMerchantItemInfo) then return end
+    JaseQoLDB.vendorItems = JaseQoLDB.vendorItems or {}
+    for i = 1, GetMerchantNumItems() or 0 do
+        local id = GetMerchantItemID and GetMerchantItemID(i)
+        if not id then
+            local link = GetMerchantItemLink and GetMerchantItemLink(i)
+            id = link and tonumber(link:match("item:(%d+)"))
+        end
+        local numAvailable = select(5, GetMerchantItemInfo(i))
+        if id and numAvailable == -1 then JaseQoLDB.vendorItems[id] = true end
+    end
+end
+
+-- What makes what: recorded from your profession windows.
+-- JaseQoLDB.recipeIndex[outputItemID] = { n = made per craft, r = {[reagentID] = qty}, by = {[character] = true} }
+local function Index()
+    JaseQoLDB.recipeIndex = JaseQoLDB.recipeIndex or {}
+    return JaseQoLDB.recipeIndex
+end
+
+local function Record(outID, n, reagents)
+    if not outID or not next(reagents) then return end
+    local idx = Index()
+    local e = idx[outID] or { by = {} }
+    e.n, e.r = math.max(1, n or 1), reagents
+    e.by[Alts.MyName()] = true
+    idx[outID] = e
+end
+
+local function ScanRecipes()
+    local T = C_TradeSkillUI
+    if T and T.GetAllRecipeIDs and ProfessionsFrame and ProfessionsFrame:IsShown() then
+        if (T.IsTradeSkillLinked and T.IsTradeSkillLinked()) or (T.IsTradeSkillGuild and T.IsTradeSkillGuild()) then return end
+        for _, id in ipairs(T.GetAllRecipeIDs() or {}) do
+            local info = T.GetRecipeInfo and T.GetRecipeInfo(id)
+            if info and info.learned then
+                local sch = T.GetRecipeSchematic and T.GetRecipeSchematic(id, false)
+                if sch and sch.outputItemID then
+                    local r = {}
+                    for _, slot in ipairs(sch.reagentSlotSchematics or {}) do
+                        local basic = not (Enum and Enum.CraftingReagentType) or slot.reagentType == Enum.CraftingReagentType.Basic
+                        local reagent = slot.reagents and slot.reagents[1]
+                        if basic and reagent and reagent.itemID then r[reagent.itemID] = slot.quantityRequired or 1 end
+                    end
+                    Record(sch.outputItemID, sch.quantityMin, r)
+                end
+            end
+        end
+        return
+    end
+    if TradeSkillFrame and TradeSkillFrame:IsShown() and GetNumTradeSkills then
+        if IsTradeSkillLinked and IsTradeSkillLinked() then return end
+        for i = 1, GetNumTradeSkills() do
+            local _, kind = GetTradeSkillInfo(i)
+            local link = kind ~= "header" and GetTradeSkillItemLink and GetTradeSkillItemLink(i)
+            local out = link and tonumber(link:match("item:(%d+)"))
+            if out then
+                local r = {}
+                for j = 1, GetTradeSkillNumReagents(i) or 0 do
+                    local _, _, q = GetTradeSkillReagentInfo(i, j)
+                    local rl = GetTradeSkillReagentItemLink(i, j)
+                    local rid = rl and tonumber(rl:match("item:(%d+)"))
+                    if rid then r[rid] = q or 1 end
+                end
+                Record(out, GetTradeSkillNumMade and GetTradeSkillNumMade(i) or 1, r)
+            end
+        end
+    end
+end
+
+-- The full picture for N crafts: what you have, what alts send, what's bought
+-- from a vendor, and - when nobody has enough of something you can make - the
+-- crafts and their own reagents (up to three levels down).
+-- rows: { id, need, have, alts, depth, kind = ok|alts|vendor|make|missing, make }
+local function Breakdown(list, crafts)
+    local rows, request = {}, {}
+    local tot = { request = 0, vendor = 0, still = 0 }
+    local usedHave, usedAlts = {}, {}
+    local idx = Index()
+    local me = Alts.MyName()
+    local function walk(id, need, depth, seen)
+        local haveAll, altsAll = HaveAndAlts(id)
+        local row = { id = id, need = need, have = haveAll, alts = altsAll, depth = depth }
+        rows[#rows + 1] = row
+        local have = math.max(0, haveAll - (usedHave[id] or 0))
+        local fromHave = math.min(need, have)
+        usedHave[id] = (usedHave[id] or 0) + fromHave
+        local short = need - fromHave
+        if short <= 0 then row.kind = "ok"; return end
+        if IsVendor(id) then
+            row.kind, row.buy = "vendor", short
+            tot.vendor = tot.vendor + short
+            return
+        end
+        local alts = math.max(0, altsAll - (usedAlts[id] or 0))
+        local fromAlts = math.min(short, alts)
+        usedAlts[id] = (usedAlts[id] or 0) + fromAlts
+        if fromAlts > 0 then request[id] = (request[id] or 0) + fromAlts end
+        local still = short - fromAlts
+        if still <= 0 then row.kind = "alts"; return end
+        local rec = idx[id]
+        if rec and rec.r and depth < 3 and not seen[id] then
+            local makes = math.ceil(still / (rec.n or 1))
+            row.kind, row.make = "make", makes
+            row.maker = rec.by and (rec.by[me] and "you" or next(rec.by)) or nil
+            seen[id] = true
+            for rid, q in pairs(rec.r) do walk(rid, q * makes, depth + 1, seen) end
+            seen[id] = nil
+        else
+            -- not seen anywhere yet: still asked for, the plan lists it as short
+            row.kind = "missing"
+            request[id] = (request[id] or 0) + still
+            tot.still = tot.still + still
+        end
+    end
+    for _, e in ipairs(list or {}) do walk(e.id, e.per * crafts, 0, {}) end
+    for _, n in pairs(request) do tot.request = tot.request + n end
+    return rows, request, tot
+end
+
 local function BuildSide(parent)
     side = CreateFrame("Frame", "JaseQoLRequestPanel", UIParent)
     side:SetSize((db.sideSize and db.sideSize[1]) or 260, (db.sideSize and db.sideSize[2]) or 300)
@@ -712,6 +854,7 @@ local function BuildSide(parent)
 
     side.summary = UI.Text(side, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
     side.summary:SetPoint("BOTTOMLEFT", 10, 40)
+    if side.summary.SetMaxLines then side.summary:SetMaxLines(3) end
     side.summary:SetPoint("RIGHT", -10, 0)
     side.summary:SetWordWrap(true)
 
@@ -769,43 +912,56 @@ local function BuildSide(parent)
         local n = tonumber(self.qty:GetText()) or 1
         if n < 1 then n = 1 end
         self.recipe:SetText(name and (name .. "  x" .. n) or "Pick a recipe")
-        local short, missing, cover = {}, 0, 0
+        local rows, request, tot = Breakdown(list, n)
         -- as many rows as the panel's height fits (it can be resized)
         local fits = math.max(1, math.floor((self:GetHeight() - 72 - 76) / 24))
         local hidden = 0
         for i, r in ipairs(self.rows) do
-            local e = list and list[i]
+            local e = rows[i]
             if e and i > fits then hidden = hidden + 1; e = nil end
             if e then
-                local need = e.per * n
-                local have, alts = HaveAndAlts(e.id)
-                local s = math.max(0, need - have)
-                if s > 0 then short[e.id] = s; missing = missing + s; cover = cover + math.min(s, alts) end
                 local iname, q = UI.ItemNameQuality(e.id)
                 r.itemID = e.id
+                local indent = e.depth * 14
+                r.icon:ClearAllPoints()
+                r.icon:SetPoint("LEFT", indent, 0)
                 r.icon:SetTexture(UI.ItemIcon(e.id))
-                r.name:SetText(iname)
-                r.name:SetTextColor(UI.QualityColor(q))
-                local hc = have >= need and "59d959" or "ff7070"
-                r.nums:SetText(("%d   |cff%s%d|r   %d"):format(need, hc, have, alts))
+                r.icon:SetDesaturated(e.kind == "vendor")
+                local tag = ""
+                if e.kind == "vendor" then
+                    tag = "  |cff9e9ea8vendor|r"
+                elseif e.kind == "make" then
+                    tag = ("  |cffffd233make %d%s|r"):format(e.make, (e.maker and e.maker ~= "you") and (" - " .. Alts.Display(e.maker)) or "")
+                end
+                r.name:SetText(iname .. tag)
+                if e.kind == "vendor" then r.name:SetTextColor(0.6, 0.6, 0.62) else r.name:SetTextColor(UI.QualityColor(q)) end
+                local hc = (e.kind == "ok") and "59d959" or (e.kind == "vendor" and "9e9ea8" or "ff7070")
+                r.nums:SetText(("%d   |cff%s%d|r   %d"):format(e.need, hc, e.have, e.alts))
                 r:Show()
             else
                 r:Hide()
             end
         end
-        self.short = short
+        self.short = request
+        local parts = {}
+        if tot.request > 0 then parts[#parts + 1] = ("Request %d from alts."):format(tot.request) end
+        for _, e in ipairs(rows) do
+            if e.kind == "make" then
+                parts[#parts + 1] = ("Make %d %s."):format(e.make, (UI.ItemNameQuality(e.id)))
+            end
+        end
+        if tot.vendor > 0 then parts[#parts + 1] = ("|cff9e9ea8Buy %d from a vendor.|r"):format(tot.vendor) end
+        if tot.still > 0 then parts[#parts + 1] = ("|cffff7070%d not seen on any alt.|r"):format(tot.still) end
+        if hidden > 0 then parts[#parts + 1] = ("|cffffd233(%d more rows: make the panel taller)|r"):format(hidden) end
         if not list or #list == 0 then
             self.summary:SetText("")
-            self.request:SetEnabledLook(false)
-        elseif missing == 0 then
+        elseif tot.request == 0 and tot.vendor == 0 and #parts == 0 then
             self.summary:SetText("|cff59d959You have everything for this.|r")
-            self.request:SetEnabledLook(false)
         else
-            self.summary:SetText(("Missing %d item(s); your alts can cover %d."):format(missing, cover)
-                .. (hidden > 0 and ("  |cffffd233(%d more: make the panel taller)|r"):format(hidden) or ""))
-            self.request:SetEnabledLook(true)
+            self.summary:SetText(#parts > 0 and table.concat(parts, " ") or "|cff59d959You have everything you can't buy.|r")
         end
-        self.request.text:SetText(missing > 0 and ("Request " .. missing) or "Request")
+        self.request:SetEnabledLook(tot.request > 0)
+        self.request.text:SetText(tot.request > 0 and ("Request " .. tot.request) or "Request")
     end
 
     side.elapsed = 0
@@ -844,7 +1000,15 @@ local function HasJobs() return #MyJobs() > 0 end
 
 ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
+    if event == "MERCHANT_SHOW" or event == "MERCHANT_UPDATE" then
+        pcall(LearnVendor)
+        return
+    elseif event == "TRADE_SKILL_LIST_UPDATE" then
+        C_Timer.After(0.3, function() pcall(ScanRecipes) end)
+        return
+    end
     if event == "TRADE_SKILL_SHOW" then
+        C_Timer.After(0.5, function() pcall(ScanRecipes) end)
         C_Timer.After(0, function()
             local f = (ProfessionsFrame and ProfessionsFrame:IsShown() and ProfessionsFrame) or TradeSkillFrame
             ShowSide(f)
@@ -966,6 +1130,7 @@ JQ.byKey[KEY].onLoad = function()
     db.requests = db.requests or {}
     db.keep = db.keep or {}
     for _, e in ipairs({ "PLAYER_LOGIN", "TRADE_SKILL_SHOW", "TRADE_SKILL_CLOSE", "TRADE_SKILL_UPDATE",
+        "TRADE_SKILL_LIST_UPDATE", "MERCHANT_SHOW", "MERCHANT_UPDATE",
         "CRAFT_SHOW", "CRAFT_CLOSE", "CRAFT_UPDATE", "MAIL_SHOW", "MAIL_CLOSED", "MAIL_SEND_SUCCESS", "MAIL_FAILED",
         "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED" }) do
         pcall(ev.RegisterEvent, ev, e)
@@ -978,5 +1143,5 @@ JQ.byKey[KEY].onDisable = function()
 end
 
 -- for tests
-JQ._AltRequest = { Plan = Plan, MyJobs = MyJobs, AddRequest = AddRequest, Remaining = Remaining,
+JQ._AltRequest = { Breakdown = Breakdown, ScanRecipes = ScanRecipes, IsVendor = IsVendor, Plan = Plan, MyJobs = MyJobs, AddRequest = AddRequest, Remaining = Remaining,
     PullFromBank = PullFromBank, StartSend = StartSend, Rows = Rows }
