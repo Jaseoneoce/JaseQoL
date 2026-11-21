@@ -29,9 +29,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 
 ## Switching tweaks on and off
 
-- **JaseTools window → Settings tab** (`/jq`, or right-click the J button): every tweak with an On/Off switch and a tooltip
-- **Game menu → Options → AddOns → JaseTools**
-- **EllesmereUI options → JaseTools** (when EllesmereUI is installed)
+- **JaseTools window → Settings tab** (`/jq`, or right-click the J button or the minimap button): every tweak with an On/Off switch and a tooltip. This is the only settings page; JaseTools adds nothing to EllesmereUI's options or the game's AddOns list.
 - `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `profResize`, `boeGuard`, `questItemGuard`, `ahCopperWarn`, `ahDebug`, `escortGuard`, `escortAnnounce`, `hubButton`, `minimapButton`, `mcSkin`, `gosSkin`)
 
 Every dependency is optional: a tweak whose addon is missing simply does nothing.
