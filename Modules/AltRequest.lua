@@ -363,6 +363,215 @@ local function NameOf(alt)
     return ("|cff%s%s|r"):format(UI.ClassHex(d and d.class), Alts.Display(alt))
 end
 
+-------------------------------------------------------------------------------
+--  Waylaid crates: a crate takes any ONE bundle from the list on its tooltip
+--  ("Use: Fill the crate with any bundle from the following list:" then
+--  "- 10 Golden Sansam" lines). For each crate in your bags JaseTools picks
+--  the bundle your characters can fill most easily and can request it.
+-------------------------------------------------------------------------------
+local CRATE_MARK = "bundle from the following list"
+
+-- tooltip text lines (split on line breaks) for a bag slot, or for raw lines
+local scanTip
+local function SlotLines(bag, slot)
+    local out = {}
+    if C_TooltipInfo and C_TooltipInfo.GetBagItem then
+        local ok, data = pcall(C_TooltipInfo.GetBagItem, bag, slot)
+        if ok and data and data.lines then
+            for _, l in ipairs(data.lines) do
+                if type(l.leftText) == "string" then out[#out + 1] = l.leftText end
+            end
+            return out
+        end
+    end
+    if not scanTip then
+        scanTip = CreateFrame("GameTooltip", "JaseQoLScanTip", nil, "GameTooltipTemplate")
+    end
+    scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    scanTip:SetBagItem(bag, slot)
+    for i = 1, scanTip:NumLines() do
+        local fs = _G["JaseQoLScanTipTextLeft" .. i]
+        local t = fs and fs:GetText()
+        if t then out[#out + 1] = t end
+    end
+    scanTip:Hide()
+    return out
+end
+
+-- { {n = 10, name = "Golden Sansam"}, ... } from tooltip lines, or nil
+local function ParseBundles(lines)
+    local found, list = false, {}
+    for _, text in ipairs(lines) do
+        if type(text) == "string" then
+            if text:find(CRATE_MARK, 1, true) then found = true end
+            for part in (text .. "\n"):gmatch("(.-)\n") do
+                local n, name = part:match("^%s*%-%s*(%d+)%s*x?%s+(.-)%s*$")
+                if n and name ~= "" then list[#list + 1] = { n = tonumber(n), name = name } end
+            end
+        end
+    end
+    if found and #list > 0 then return list end
+end
+
+-- item name (lower case) -> item ID, from everything JaseTools has seen
+local function NameIndex()
+    local idx = {}
+    for id, it in pairs(JaseQoLDB.items or {}) do
+        if type(it) == "table" and type(it.n) == "string" then idx[it.n:lower()] = id end
+    end
+    return idx
+end
+
+-- Crates in my bags: { {bag, slot, id, name, bundles}, ... } (bundles cached per crate type)
+local function MyCrates()
+    db.crates = db.crates or {}
+    local out = {}
+    for _, bag in ipairs(Alts.BagIDs()) do
+        for slot = 1, NumSlots(bag) do
+            local i = Info(bag, slot)
+            local id = i and i.itemID
+            if id then
+                local cached = db.crates[id]
+                if cached == nil then
+                    local name = ((C_Item and C_Item.GetItemInfo) or GetItemInfo)(id)
+                    if name and name:find("Waylaid", 1, true) then
+                        local bundles = ParseBundles(SlotLines(bag, slot))
+                        if bundles then
+                            cached = { name = name, bundles = bundles }
+                            db.crates[id] = cached
+                        end
+                    elseif name then
+                        db.crates[id] = false   -- not a crate
+                    end
+                end
+                if cached then
+                    for _ = 1, (i.stackCount or 1) do
+                        out[#out + 1] = { bag = bag, slot = slot, id = id, name = cached.name, bundles = cached.bundles }
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- How a bundle can be filled. used = { bags = {[id] = n}, alts = {[id] = n} }:
+-- what other crates and earlier requests already take from my bags / the alts.
+-- Returns { id, n, mine, alts = {{alt, n}}, short, logins }.
+local function Coverage(bundle, idx, used)
+    local id = idx[bundle.name:lower()]
+    local r = { name = bundle.name, n = bundle.n, id = id, mine = 0, alts = {}, short = bundle.n, logins = 99 }
+    if not id then return r end
+    local me = Alts.MyName()
+    local myBags = Live(Alts.BagIDs())
+    local mine = math.max(0, (myBags[id] or 0) - (used.bags[id] or 0))
+    local spoken = used.alts[id] or 0
+    r.mine = math.min(mine, bundle.n)
+    local left = bundle.n - r.mine
+    local realm = Alts.RealmTable()
+    local faction = realm[me] and realm[me].faction
+    local offers = {}
+    for name, data in pairs(realm) do
+        if name ~= me and (not faction or not data.faction or data.faction == faction) then
+            local bags, bank = Holdings(name)
+            local give = Give(bags, bank, id, math.huge)
+            if give > 0 then offers[#offers + 1] = { alt = name, n = give } end
+        end
+    end
+    table.sort(offers, function(a, b) return a.n > b.n end)
+    for _, o in ipairs(offers) do
+        local avail = o.n
+        if spoken > 0 then local s = math.min(spoken, avail); avail = avail - s; spoken = spoken - s end
+        if left > 0 and avail > 0 then
+            local take = math.min(left, avail)
+            r.alts[#r.alts + 1] = { alt = o.alt, n = take, has = o.n }
+            left = left - take
+        end
+    end
+    r.short = left
+    r.logins = left > 0 and 99 or #r.alts
+    return r
+end
+
+-- the easiest bundle: fillable now from bags, else fewest logins, else most covered
+local function BestBundle(crate, idx, used)
+    local best, all = nil, {}
+    for _, b in ipairs(crate.bundles) do
+        local c = Coverage(b, idx, used)
+        all[#all + 1] = c
+        if not best or c.logins < best.logins
+            or (c.logins == best.logins and c.short < best.short)
+            or (c.logins == best.logins and c.short == best.short and c.mine > best.mine) then
+            best = c
+        end
+    end
+    return best, all
+end
+
+local function CrateRows(add, me)
+    local crates = MyCrates()
+    if #crates == 0 then return end
+    local idx = NameIndex()
+    -- what earlier requests already claim from the alts
+    local used = { bags = {}, alts = {} }
+    for id, n in pairs(Remaining(me)) do used.alts[id] = n end
+    -- crates already requested: their bundle's part from my bags stays theirs
+    local requested = {}
+    local mine = RequestOf(me)
+    for _, c in ipairs(mine and mine.crates or {}) do
+        requested[c.label] = (requested[c.label] or 0) + 1
+        used.bags[c.id] = (used.bags[c.id] or 0) + (c.mine or 0)
+    end
+    add({ head = "Waylaid crates in your bags" })
+    for _, crate in ipairs(crates) do
+        local label = crate.name:gsub("^Waylaid Crate:%s*", "")
+        local best, all
+        if (requested[label] or 0) > 0 then
+            requested[label] = requested[label] - 1
+            add({ icon = crate.id, itemID = crate.id,
+                  text = "|cffffd25a" .. label .. "|r  |cff8fb8ffrequested - see the plan below|r" })
+        else
+            best, all = BestBundle(crate, idx, used)
+        end
+        local status, button, action
+        if not all then
+            -- already listed as requested
+        elseif best and best.short == 0 then
+            if best.mine >= best.n then
+                status = "|cff59d959fill it now with " .. best.n .. " " .. best.name .. " from your bags|r"
+            else
+                local who = {}
+                for _, a in ipairs(best.alts) do who[#who + 1] = NameOf(a.alt) .. " " .. a.n end
+                status = ("best: |cffffffff%d %s|r - you %d, %s"):format(best.n, best.name, best.mine, table.concat(who, ", "))
+                local pick = best
+                button, action = "Request", function()
+                    AddRequest(me, { [pick.id] = pick.n - pick.mine }, "Crate: " .. label)
+                    local r = RequestOf(me, true)
+                    r.crates = r.crates or {}
+                    r.crates[#r.crates + 1] = { label = label, id = pick.id, n = pick.n, mine = pick.mine }
+                    Status(("Requested %d %s from alts for %s. The plan is below."):format(pick.n - pick.mine, pick.name, label))
+                end
+            end
+            -- claim it so the next crate doesn't count the same items
+            used.bags[best.id] = (used.bags[best.id] or 0) + best.mine
+            used.alts[best.id] = (used.alts[best.id] or 0) + (best.n - best.mine)
+        else
+            status = best and ("|cffff7070can't fill yet|r - closest: %d %s (short %d)"):format(best.n, best.name, best.short)
+                or "|cffff7070can't fill yet|r"
+        end
+        if all then
+            add({ icon = crate.id, itemID = crate.id, text = "|cffffd25a" .. label .. "|r  " .. status,
+                  button = button, enabled = button ~= nil, action = action })
+        end
+        for _, c in ipairs(all or {}) do
+            local total = c.mine
+            for _, a in ipairs(c.alts) do total = total + a.n end
+            local mark = c.short == 0 and "|cff59d959ok|r" or ("|cff9e9ea8" .. (c.id and ("have " .. total) or "none seen") .. "|r")
+            add({ text = ("%d %s  %s"):format(c.n, c.name, mark), indent = true, muted = c.short > 0 })
+        end
+    end
+end
+
 local function Rows()
     local rows = {}
     local function add(r) rows[#rows + 1] = r end
@@ -392,6 +601,9 @@ local function Rows()
         end
     end
 
+    -- Waylaid crates in my bags: can they be filled, and from whom.
+    CrateRows(add, me)
+
     -- My requests, and the plan for them.
     local mine = RequestOf(me)
     if mine and next(mine.items) then
@@ -406,8 +618,11 @@ local function Rows()
                   text = ItemText(id, e.need) .. ("  |cff9e9ea8sent %d%s|r"):format(e.sent or 0, keep > 0 and (" - keep " .. keep .. " on alts") or ""),
                   button = "Cancel", enabled = true, action = function()
                       mine.items[id] = nil
+                      for i = #(mine.crates or {}), 1, -1 do
+                          if mine.crates[i].id == id then table.remove(mine.crates, i) end
+                      end
                       Tidy(me)
-                      win:Refresh()
+                      if win then win:Refresh() end
                   end })
         end
         local steps, short = Plan(me)
@@ -449,7 +664,7 @@ local function Rows()
         end
     end
     if #rows == 0 then
-        add({ text = "No requests. Open a profession window, pick a recipe and press Request.", muted = true })
+        add({ text = "No requests. Open a profession window, pick a recipe and press Request, or carry a waylaid crate.", muted = true })
     end
     return rows
 end
@@ -1154,4 +1369,5 @@ end
 
 -- for tests
 JQ._AltRequest = { Breakdown = Breakdown, ScanRecipes = ScanRecipes, IsVendor = IsVendor, Plan = Plan, MyJobs = MyJobs, AddRequest = AddRequest, Remaining = Remaining,
-    PullFromBank = PullFromBank, StartSend = StartSend, Rows = Rows }
+    PullFromBank = PullFromBank, StartSend = StartSend, Rows = Rows,
+    ParseBundles = ParseBundles, MyCrates = MyCrates, BestBundle = BestBundle, NameIndex = NameIndex }

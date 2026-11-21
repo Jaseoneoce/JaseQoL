@@ -100,7 +100,7 @@ local function Paint(btn)
         tag:SetFont(font or STANDARD_TEXT_FONT, math.max(9, (size or 10) - 1), "OUTLINE")
         tag:SetTextColor(1, 0.82, 0)
         tag:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 2, 2)
-        tag:SetText("Quest")
+        tag:SetText("QST")
         btn._jqQuestTag = tag
     end
     if tag then tag:SetShown(show and true or false) end
