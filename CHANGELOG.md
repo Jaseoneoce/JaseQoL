@@ -2,7 +2,7 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
-## Unreleased
+## v1.4.0 - 2026-11-22
 
 ### New
 - **Waylaid crates in the Requests tab** - every waylaid crate in your bags is listed with each of its bundles and whether your characters can fill it (counting your bags plus your alts' bags and banks). JaseTools picks the easiest bundle (fill it now from your bags, else the fewest alt logins) and shows who has it; **Request** asks your alts for the missing part and gives them the usual jobs (pull from bank, send). Two crates never count the same items.
