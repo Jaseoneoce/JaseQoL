@@ -1,12 +1,12 @@
 ## Interface: 16001
 ## AllowLoadGameType: camelot
 ## Title: |cff0cd29fJaseQoL|r
-## Notes: XP level colours, Dungeon Journal skin and new view, alt inventory and tooltips, send/request mats between alts, resizable profession window, BoE sell warning, AH copper warning, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
+## Notes: XP level colours, Dungeon Journal view and skin, alt inventory/tooltips, send/request mats between alts, resizable profession UI, BoE and AH copper warnings, escort auto-accept guard, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
 ## Author: jasone
 ## X-AI-Assisted: Built with AI assistance (Claude Code, Anthropic); directed and tested by Jase
 ## X-Website: https://github.com/Jaseoneoce/JaseQoL
 ## Version: @project-version@
-## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, ForeverDungeonJournal
+## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQuestTracker, ForeverDungeonJournal
 ## SavedVariables: JaseQoLDB
 ## IconTexture: Interface\AddOns\JaseQoL\Media\icon
 ## AddonCompartmentFunc: JaseQoL_OnAddonCompartmentClick
@@ -27,6 +27,7 @@ Modules\ProfessionsResize.lua
 Modules\BoEGuard.lua
 Modules\AHCopperWarn.lua
 Modules\AHDebug.lua
+Modules\EscortGuard.lua
 Modules\MastercraftSkin.lua
 Modules\GuildOSSkin.lua
 Modules\SettingsPage.lua

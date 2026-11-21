@@ -105,6 +105,8 @@ SlashCmdList.JASEQOL = function(msg)
         return List()
     end
     if msg == "list" then return List() end
+    local sub, rest = msg:match("^(%S+)%s*(.-)$")
+    if sub and sub:lower() == "escort" and JQ.EscortCommand then return JQ.EscortCommand(rest) end
     for _, spec in ipairs(JQ.modules) do
         if spec.key:lower() == msg:lower() then
             return JQ.SetEnabled(spec.key, not JQ.IsEnabled(spec.key))
