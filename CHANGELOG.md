@@ -11,7 +11,13 @@ JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Co
 - **Quests category in EllesmereUI bags** - the All Items view gets a Quests category holding every quest item: pure quest items and anything a quest in your log needs (like Scorpok Pincer). It updates as you pick up and hand in quests. Items you assigned to a category yourself stay where you put them.
 
 ### Changed
+- Request from alts and waylaid crates now count every character's **bags, bank and mailbox**, yours included. An alt's job says what to take out of their mail before pressing Send (the mailbox is used before the bank, since they're there to send anyway), and Pull from bank never takes more than the bank part.
+- The QST tag uses the same font, size, outline and corner as EllesmereUI's own BoE / item level text.
 - All JaseTools settings are now only on the JaseTools window's Settings tab (`/jq`, the J button or the minimap button). The JaseTools section is gone from EllesmereUI's options and from the game's Options > AddOns list.
+
+### Fixed
+- Waylaid crates ignored what was in your own bank (and mail), so a crate could say "have 0" while you had the bars.
+- A crate you can't fill yet now names the bundle you're furthest along with as "closest" (and says how many you have), not just the one with the smallest shortfall.
 
 ## v1.3.1 - 2026-11-22
 

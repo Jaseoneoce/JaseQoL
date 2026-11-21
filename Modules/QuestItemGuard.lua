@@ -97,20 +97,46 @@ JQ.QuestNeeds = Needed
 -------------------------------------------------------------------------------
 local tagged = setmetatable({}, { __mode = "k" })   -- buttons we've looked at
 
+-- Look like EllesmereUI's own slot text (its BoE label): same font, size,
+-- outline, shadow and corner, read from that label each time so it follows
+-- EllesmereUI's font settings. Without EllesmereUI: a small outlined font.
+local function Style(tag, btn)
+    local ref = rawget(btn, "BindTypeText")
+    if ref and type(ref) == "table" and ref.GetFont then
+        local font, size, flags = ref:GetFont()
+        if font then tag:SetFont(font, size or 10, flags or "") end
+        if ref.GetShadowOffset then tag:SetShadowOffset(ref:GetShadowOffset()) end
+        if ref.GetShadowColor then tag:SetShadowColor(ref:GetShadowColor()) end
+        local p, rel, rp, x, y = ref:GetPoint(1)
+        if p then
+            tag:ClearAllPoints()
+            tag:SetPoint(p, rel or btn, rp or p, x or 0, y or 0)
+            return
+        end
+    elseif not rawget(btn, "_jqStyled") then
+        local font, size = GameFontNormalSmall and GameFontNormalSmall:GetFont()
+        tag:SetFont(font or STANDARD_TEXT_FONT, math.max(9, (size or 10) - 1), "OUTLINE")
+    end
+    tag:ClearAllPoints()
+    tag:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 2, 2)
+end
+
 local function Paint(btn)
     local item = rawget(btn, "_jqItem")
     local show = item and Needed(item) ~= nil
     local tag = rawget(btn, "_jqQuestTag")
     if show and not tag then
-        tag = (rawget(btn, "_textOverlay") or btn):CreateFontString(nil, "OVERLAY")
-        local font, size = GameFontNormalSmall and GameFontNormalSmall:GetFont()
-        tag:SetFont(font or STANDARD_TEXT_FONT, math.max(9, (size or 10) - 1), "OUTLINE")
+        local ref = rawget(btn, "BindTypeText")
+        local parent = (type(ref) == "table" and ref.GetParent and ref:GetParent()) or rawget(btn, "_textOverlay") or btn
+        tag = parent:CreateFontString(nil, "OVERLAY")
         tag:SetTextColor(1, 0.82, 0)
-        tag:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 2, 2)
         tag:SetText("QST")
         btn._jqQuestTag = tag
     end
-    if tag then tag:SetShown(show and true or false) end
+    if tag then
+        if show then Style(tag, btn); btn._jqStyled = true end
+        tag:SetShown(show and true or false)
+    end
 end
 
 local function OnQuality(btn, _, item)

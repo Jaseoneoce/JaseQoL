@@ -56,22 +56,26 @@ end
 
 local function Keep(id) return (db.keep and db.keep[id]) or 0 end
 
--- bags / bank counts for a character: live for me, recorded for others.
+-- bags / bank / mailbox counts for a character: bags (and an open bank) live
+-- for me, the rest as last recorded.
 local function Holdings(alt)
-    if alt == Alts.MyName() then
-        local bank = Alts.IsBankOpen() and Live(Alts.BankIDs()) or ((Alts.RealmTable()[alt] or {}).bank or {})
-        return Live(Alts.BagIDs()), bank
-    end
     local d = Alts.RealmTable()[alt] or {}
-    return d.bags or {}, d.bank or {}
+    if alt == Alts.MyName() then
+        local bank = Alts.IsBankOpen() and Live(Alts.BankIDs()) or (d.bank or {})
+        return Live(Alts.BagIDs()), bank, d.mail or {}
+    end
+    return d.bags or {}, d.bank or {}, d.mail or {}
 end
 
--- How many of id this alt can give: total minus the keep amount, bags first.
-local function Give(bags, bank, id, want)
-    local b, k = bags[id] or 0, bank[id] or 0
-    local take = math.min(want, math.max(0, b + k - Keep(id)))
+-- How many of id this alt can give: total minus the keep amount. Bags first,
+-- then the mailbox (they're at one to send anyway), then the bank.
+-- Returns take, fromBags, fromBank, fromMail.
+local function Give(bags, bank, id, want, mail)
+    local b, m, k = bags[id] or 0, (mail and mail[id]) or 0, bank[id] or 0
+    local take = math.min(want, math.max(0, b + m + k - Keep(id)))
     local fromBags = math.min(take, b)
-    return take, fromBags, take - fromBags
+    local fromMail = math.min(take - fromBags, m)
+    return take, fromBags, take - fromBags - fromMail, fromMail
 end
 
 -------------------------------------------------------------------------------
@@ -128,7 +132,7 @@ end
 -------------------------------------------------------------------------------
 --  Planner
 -------------------------------------------------------------------------------
--- steps = { {alt, items = {[id] = {bags = n, bank = n}}, bankTown}, ... }, short = {[id] = n}
+-- steps = { {alt, items = {[id] = {bags = n, bank = n, mail = n}}, bankTown}, ... }, short = {[id] = n}
 local function Plan(recipient)
     local rem = Remaining(recipient)
     if not next(rem) then return nil end
@@ -137,8 +141,8 @@ local function Plan(recipient)
     local cands = {}
     for name, data in pairs(realm) do
         if name ~= recipient and (not faction or not data.faction or data.faction == faction) then
-            local bags, bank = Holdings(name)
-            cands[#cands + 1] = { name = name, bags = bags, bank = bank, town = Alts.InBankTown(name) }
+            local bags, bank, mail = Holdings(name)
+            cands[#cands + 1] = { name = name, bags = bags, bank = bank, mail = mail, town = Alts.InBankTown(name) }
         end
     end
     table.sort(cands, function(a, b) return a.name < b.name end)
@@ -149,8 +153,8 @@ local function Plan(recipient)
             if not used[c.name] then
                 local cover, fromBags = 0, 0
                 for id, want in pairs(rem) do
-                    local take, fb = Give(c.bags, c.bank, id, want)
-                    cover, fromBags = cover + take, fromBags + fb
+                    local take, fb, _, fm = Give(c.bags, c.bank, id, want, c.mail)
+                    cover, fromBags = cover + take, fromBags + fb + fm
                 end
                 if cover > 0 then
                     -- fewest logins: most units first; bank towns and bag stock break ties
@@ -163,9 +167,9 @@ local function Plan(recipient)
         used[best.name] = true
         local step = { alt = best.name, items = {}, town = best.town, needsBank = false }
         for id, want in pairs(rem) do
-            local take, fb, fk = Give(best.bags, best.bank, id, want)
+            local take, fb, fk, fm = Give(best.bags, best.bank, id, want, best.mail)
             if take > 0 then
-                step.items[id] = { bags = fb, bank = fk }
+                step.items[id] = { bags = fb, bank = fk, mail = fm }
                 if fk > 0 then step.needsBank = true end
                 rem[id] = want - take
                 if rem[id] <= 0 then rem[id] = nil end
@@ -176,7 +180,7 @@ local function Plan(recipient)
     return steps, rem
 end
 
--- This character's jobs: { {to = recipient, items = {[id] = {bags, bank}}, needsBank}, ... }
+-- This character's jobs: { {to = recipient, items = {[id] = {bags, bank, mail}}, needsBank}, ... }
 local function MyJobs()
     local jobs = {}
     local me = Alts.MyName()
@@ -212,16 +216,19 @@ end
 local function PullFromBank()
     if not Alts.IsBankOpen() then Status("Open your bank first.") return end
     if InCombatLockdown() then return end
-    local want = {}
+    local want, fromBank = {}, {}
     for _, job in ipairs(MyJobs()) do
-        for id, e in pairs(job.items) do want[id] = (want[id] or 0) + (e.bags or 0) + (e.bank or 0) end
+        for id, e in pairs(job.items) do
+            want[id] = (want[id] or 0) + (e.bags or 0) + (e.bank or 0) + (e.mail or 0)
+            fromBank[id] = (fromBank[id] or 0) + (e.bank or 0)
+        end
     end
     local inBags = Live(Alts.BagIDs())
     local free = FreeBagSlots()
     local moved, short = 0, false
     ClearCursor()
     for id, total in pairs(want) do
-        local pull = total - (inBags[id] or 0)
+        local pull = math.min(fromBank[id] or 0, total - (inBags[id] or 0))
         for _, bag in ipairs(Alts.BankIDs()) do
             if pull <= 0 then break end
             for slot = 1, NumSlots(bag) do
@@ -307,7 +314,7 @@ function SendNext()
         local missing = 0
         for _, n in pairs(job.left) do missing = missing + math.max(0, n) end
         if missing > 0 then
-            return FinishSend(("Sent %d mail(s). %d item(s) weren't in your bags - pull from the bank first."):format(done, missing))
+            return FinishSend(("Sent %d mail(s). %d item(s) weren't in your bags - pull them from the bank or take them out of your mail first."):format(done, missing))
         end
         return FinishSend(("Done: %d mail(s) sent to %s"):format(done, Alts.Display(job.to)))
     end
@@ -336,7 +343,7 @@ local function StartSend(recipient)
     local left = {}
     for _, j in ipairs(MyJobs()) do
         if j.to == recipient then
-            for id, e in pairs(j.items) do left[id] = (left[id] or 0) + (e.bags or 0) + (e.bank or 0) end
+            for id, e in pairs(j.items) do left[id] = (left[id] or 0) + (e.bags or 0) + (e.bank or 0) + (e.mail or 0) end
         end
     end
     if not next(left) then Status("Nothing to send to " .. Alts.Display(recipient)) return end
@@ -463,18 +470,26 @@ local function Coverage(bundle, idx, used)
     local r = { name = bundle.name, n = bundle.n, id = id, mine = 0, alts = {}, short = bundle.n, logins = 99 }
     if not id then return r end
     local me = Alts.MyName()
-    local myBags = Live(Alts.BagIDs())
-    local mine = math.max(0, (myBags[id] or 0) - (used.bags[id] or 0))
+    -- mine: my bags (live), my mailbox and my own bank (live while open, else as
+    -- last seen); claims by other crates come off bags first, then mail, then bank
+    local myBags, myBank, myMail = Holdings(me)
+    local claimed = used.bags[id] or 0
+    local function after(have) local t = math.min(have, claimed); claimed = claimed - t; return have - t end
+    local inBags = after(myBags[id] or 0)
+    local inMail = after(myMail[id] or 0)
+    local inBank = after(myBank[id] or 0)
     local spoken = used.alts[id] or 0
-    r.mine = math.min(mine, bundle.n)
+    r.mine = math.min(inBags + inMail + inBank, bundle.n)
+    r.fromMail = math.min(inMail, math.max(0, r.mine - inBags))
+    r.fromBank = math.max(0, r.mine - inBags - r.fromMail)
     local left = bundle.n - r.mine
     local realm = Alts.RealmTable()
     local faction = realm[me] and realm[me].faction
     local offers = {}
     for name, data in pairs(realm) do
         if name ~= me and (not faction or not data.faction or data.faction == faction) then
-            local bags, bank = Holdings(name)
-            local give = Give(bags, bank, id, math.huge)
+            local bags, bank, mail = Holdings(name)
+            local give = Give(bags, bank, id, math.huge, mail)
             if give > 0 then offers[#offers + 1] = { alt = name, n = give } end
         end
     end
@@ -493,17 +508,26 @@ local function Coverage(bundle, idx, used)
     return r
 end
 
--- the easiest bundle: fillable now from bags, else fewest logins, else most covered
+-- the easiest bundle: fillable by you now, else fewest alt logins; when none
+-- can be filled, the one you're furthest along with (share of it you have)
+local function Better(c, best)
+    if not best then return true end
+    if c.logins ~= best.logins then return c.logins < best.logins end
+    if c.logins >= 99 then
+        local fc, fb = (c.n - c.short) / c.n, (best.n - best.short) / best.n
+        if fc ~= fb then return fc > fb end
+        return c.short < best.short
+    end
+    if c.mine ~= best.mine then return c.mine > best.mine end
+    return (c.fromBank or 0) < (best.fromBank or 0)
+end
+
 local function BestBundle(crate, idx, used)
     local best, all = nil, {}
     for _, b in ipairs(crate.bundles) do
         local c = Coverage(b, idx, used)
         all[#all + 1] = c
-        if not best or c.logins < best.logins
-            or (c.logins == best.logins and c.short < best.short)
-            or (c.logins == best.logins and c.short == best.short and c.mine > best.mine) then
-            best = c
-        end
+        if Better(c, best) then best = c end
     end
     return best, all
 end
@@ -537,12 +561,20 @@ local function CrateRows(add, me)
         if not all then
             -- already listed as requested
         elseif best and best.short == 0 then
+            local where = {}
+            if (best.fromMail or 0) > 0 then where[#where + 1] = best.fromMail .. " in your mail" end
+            if (best.fromBank or 0) > 0 then where[#where + 1] = best.fromBank .. " in your bank" end
+            local bankNote = #where > 0 and (" (" .. table.concat(where, ", ") .. ")") or ""
             if best.mine >= best.n then
-                status = "|cff59d959fill it now with " .. best.n .. " " .. best.name .. " from your bags|r"
+                local take = {}
+                if (best.fromMail or 0) > 0 then take[#take + 1] = best.fromMail .. " from your mail" end
+                if (best.fromBank or 0) > 0 then take[#take + 1] = best.fromBank .. " from your bank" end
+                status = "|cff59d959fill it now with " .. best.n .. " " .. best.name
+                    .. (#take > 0 and (" - take " .. table.concat(take, " and ") .. " first") or " from your bags") .. "|r"
             else
                 local who = {}
                 for _, a in ipairs(best.alts) do who[#who + 1] = NameOf(a.alt) .. " " .. a.n end
-                status = ("best: |cffffffff%d %s|r - you %d, %s"):format(best.n, best.name, best.mine, table.concat(who, ", "))
+                status = ("best: |cffffffff%d %s|r - you %d%s, %s"):format(best.n, best.name, best.mine, bankNote, table.concat(who, ", "))
                 local pick = best
                 button, action = "Request", function()
                     AddRequest(me, { [pick.id] = pick.n - pick.mine }, "Crate: " .. label)
@@ -556,7 +588,8 @@ local function CrateRows(add, me)
             used.bags[best.id] = (used.bags[best.id] or 0) + best.mine
             used.alts[best.id] = (used.alts[best.id] or 0) + (best.n - best.mine)
         else
-            status = best and ("|cffff7070can't fill yet|r - closest: %d %s (short %d)"):format(best.n, best.name, best.short)
+            status = best and ("|cffff7070can't fill yet|r - closest: %d %s (have %d, short %d)"):format(
+                    best.n, best.name, best.n - best.short, best.short)
                 or "|cffff7070can't fill yet|r"
         end
         if all then
@@ -582,21 +615,25 @@ local function Rows()
     if #jobs > 0 then
         add({ head = "Job for this character" })
         for _, j in ipairs(jobs) do
-            local fromBank, list = 0, {}
+            local fromBank, fromMail, list = 0, 0, {}
             for id, e in pairs(j.items) do
                 fromBank = fromBank + (e.bank or 0)
-                list[#list + 1] = { id = id, n = (e.bags or 0) + (e.bank or 0), bank = e.bank or 0 }
+                fromMail = fromMail + (e.mail or 0)
+                list[#list + 1] = { id = id, n = (e.bags or 0) + (e.bank or 0) + (e.mail or 0), bank = e.bank or 0, mail = e.mail or 0 }
             end
             table.sort(list, function(a, b) return UI.ItemNameQuality(a.id) < UI.ItemNameQuality(b.id) end)
             add({ text = "For " .. NameOf(j.to) .. ":", muted = true })
             for _, it in ipairs(list) do
-                add({ icon = it.id, text = ItemText(it.id, it.n) .. (it.bank > 0 and ("  |cff9e9ea8(" .. it.bank .. " from bank)|r") or ""), indent = true })
+                local where = {}
+                if it.bank > 0 then where[#where + 1] = it.bank .. " from bank" end
+                if it.mail > 0 then where[#where + 1] = it.mail .. " from your mail" end
+                add({ icon = it.id, text = ItemText(it.id, it.n) .. (#where > 0 and ("  |cff9e9ea8(" .. table.concat(where, ", ") .. ")|r") or ""), indent = true })
             end
             if fromBank > 0 then
                 add({ step = "1. At a bank: take what's needed out", button = "Pull from bank",
                       enabled = Alts.IsBankOpen(), action = PullFromBank })
             end
-            add({ step = (fromBank > 0 and "2" or "1") .. ". At a mailbox: send to " .. NameOf(j.to), button = "Send",
+            add({ step = (fromBank > 0 and "2" or "1") .. ". At a mailbox: " .. (fromMail > 0 and "take the items out of your mail, then " or "") .. "send to " .. NameOf(j.to), button = "Send",
                   enabled = mailOpen and not job, action = function() StartSend(j.to) end })
         end
     end
@@ -634,13 +671,15 @@ local function Rows()
             local where = Alts.WhereText(s.alt)
             add({ step = ("%d. Log in on %s%s"):format(n, NameOf(s.alt),
                 where and ("  |cff9e9ea8" .. where .. (s.town and " (bank town)" or " - not in a bank town") .. "|r") or "  |cff9e9ea8location not known yet|r") })
-            local bankList, bagList = {}, {}
+            local bankList, bagList, mailList = {}, {}, {}
             for id, e in pairs(s.items) do
                 if (e.bank or 0) > 0 then bankList[#bankList + 1] = ItemText(id, e.bank) end
                 if (e.bags or 0) > 0 then bagList[#bagList + 1] = ItemText(id, e.bags) end
+                if (e.mail or 0) > 0 then mailList[#mailList + 1] = ItemText(id, e.mail) end
             end
             if #bankList > 0 then add({ text = "Bank: take " .. table.concat(bankList, ", "), indent = true }) end
             if #bagList > 0 then add({ text = "In bags: " .. table.concat(bagList, ", "), indent = true }) end
+            if #mailList > 0 then add({ text = "In their mail: " .. table.concat(mailList, ", "), indent = true }) end
             add({ text = "Mailbox: send to " .. NameOf(me), indent = true })
         end
         if short and next(short) then
@@ -854,8 +893,8 @@ local function HaveAndAlts(id)
     local faction = UnitFactionGroup("player")
     for name, d in pairs(Alts.RealmTable()) do
         if name ~= me and (not d.faction or d.faction == faction) then
-            local b, k = Holdings(name)
-            alts = alts + math.max(0, (b[id] or 0) + (k[id] or 0) - Keep(id))
+            local b, k, m = Holdings(name)
+            alts = alts + math.max(0, (b[id] or 0) + (k[id] or 0) + (m[id] or 0) - Keep(id))
         end
     end
     return have, alts
@@ -1279,7 +1318,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
             if #jobs == 0 then return end
             for _, j in ipairs(jobs) do
                 local n, bank = 0, false
-                for _, e in pairs(j.items) do n = n + (e.bags or 0) + (e.bank or 0); if (e.bank or 0) > 0 then bank = true end end
+                for _, e in pairs(j.items) do n = n + (e.bags or 0) + (e.bank or 0) + (e.mail or 0); if (e.bank or 0) > 0 then bank = true end end
                 local line = ("Job: send %d item(s) to %s%s"):format(
                     n, Alts.Display(j.to), bank and " (some are in your bank)" or "")
                 if not line:find("%.$") then line = line .. "." end
