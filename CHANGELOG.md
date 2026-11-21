@@ -6,6 +6,8 @@ JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Co
 
 ### New
 - **Waylaid crates in the Requests tab** - every waylaid crate in your bags is listed with each of its bundles and whether your characters can fill it (counting your bags plus your alts' bags and banks). JaseTools picks the easiest bundle (fill it now from your bags, else the fewest alt logins) and shows who has it; **Request** asks your alts for the missing part and gives them the usual jobs (pull from bank, send). Two crates never count the same items.
+- **Crates count smelting** - if you have Mining, ore counts as bars for a crate (Copper, Tin, Bronze, Silver, Iron, Gold, Steel, Mithril, Truesilver, Dark Iron, Thorium; plus any recipe JaseTools has seen in a profession window). Your own bars and ore come first, then alts' bars, then ore from alts sent to you to smelt; Steel says how much Coal to buy. If you can't smelt it, it says who can.
+- **Crate tooltips** - hovering a waylaid crate says whether you can fill it and from where, e.g. "fill it now with 20 Mithril Bar: 8 in your bank, make 12 from 12 Mithril Ore".
 - **Flag items your quests need** - items a quest in your log asks for that a vendor would also buy (like Scorpok Pincer) get a yellow "QST" tag on their bag slot, a "Needed for: <quest> (3/8)" line on their tooltip, and a big warning if you sell one, so you can buy it back. Stays on until you hand the quest in.
 - **Quests category in EllesmereUI bags** - the All Items view gets a Quests category holding every quest item: pure quest items and anything a quest in your log needs (like Scorpok Pincer). It updates as you pick up and hand in quests. Items you assigned to a category yourself stay where you put them.
 

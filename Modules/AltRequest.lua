@@ -462,6 +462,45 @@ local function MyCrates()
     return out
 end
 
+-- Smelting (Mining): bars from ore, known up front so a crate can count ore as
+-- bars before you've opened the smelting window. Coal is bought from a vendor.
+-- [bar] = { n = bars per smelt, r = {[reagent] = qty}, skill = Mining needed }
+local SMELT = {
+    [2840]  = { n = 1, r = { [2770] = 1 }, skill = 1 },                  -- Copper Bar <- Copper Ore
+    [3576]  = { n = 1, r = { [2771] = 1 }, skill = 65 },                 -- Tin Bar <- Tin Ore
+    [2841]  = { n = 2, r = { [2840] = 1, [3576] = 1 }, skill = 65 },     -- Bronze Bar x2 <- Copper Bar + Tin Bar
+    [2842]  = { n = 1, r = { [2775] = 1 }, skill = 75 },                 -- Silver Bar <- Silver Ore
+    [3575]  = { n = 1, r = { [2772] = 1 }, skill = 125 },                -- Iron Bar <- Iron Ore
+    [3577]  = { n = 1, r = { [2776] = 1 }, skill = 155 },                -- Gold Bar <- Gold Ore
+    [3859]  = { n = 1, r = { [3575] = 1, [3857] = 1 }, skill = 165, vendor = { [3857] = true } }, -- Steel Bar <- Iron Bar + Coal
+    [3860]  = { n = 1, r = { [3858] = 1 }, skill = 175 },                -- Mithril Bar <- Mithril Ore
+    [6037]  = { n = 1, r = { [7911] = 1 }, skill = 230 },                -- Truesilver Bar <- Truesilver Ore
+    [11371] = { n = 1, r = { [11370] = 8 }, skill = 230 },               -- Dark Iron Bar <- 8 Dark Iron Ore
+    [12359] = { n = 1, r = { [10620] = 1 }, skill = 250 },               -- Thorium Bar <- Thorium Ore
+}
+
+-- How id is made, whether I can make it, and who can.
+-- Learned recipes (opened profession windows) first, then smelting.
+local function MakeRecipe(id, me)
+    local learned = JaseQoLDB.recipeIndex and JaseQoLDB.recipeIndex[id]
+    if type(learned) == "table" and learned.r and next(learned.r) then
+        local makers = {}
+        for who in pairs(learned.by or {}) do makers[#makers + 1] = who end
+        return { n = learned.n or 1, r = learned.r }, (learned.by or {})[me] and true or false, makers
+    end
+    local smelt = SMELT[id]
+    if not smelt then return nil end
+    local makers, mine = {}, false
+    for name, data in pairs(Alts.RealmTable()) do
+        local rank = data.profs and data.profs.Mining
+        if rank and rank >= smelt.skill then
+            makers[#makers + 1] = name
+            if name == me then mine = true end
+        end
+    end
+    return smelt, mine, makers
+end
+
 -- How a bundle can be filled. used = { bags = {[id] = n}, alts = {[id] = n} }:
 -- what other crates and earlier requests already take from my bags / the alts.
 -- Returns { id, n, mine, alts = {{alt, n}}, short, logins }.
@@ -485,6 +524,39 @@ local function Coverage(bundle, idx, used)
     local left = bundle.n - r.mine
     local realm = Alts.RealmTable()
     local faction = realm[me] and realm[me].faction
+
+    -- What can make this item (smelting ore into bars, or a learned recipe), and
+    -- whether I can: then my own reagents come before anyone else's bars.
+    local rec, canMake, makers = MakeRecipe(id, me)
+    r.makers = makers
+    local myReagents = {}
+    if rec then
+        for rid in pairs(rec.r) do
+            local b, k, m = Holdings(me)
+            local have = (b[rid] or 0) + (k[rid] or 0) + (m[rid] or 0) - (used.bags[rid] or 0)
+            myReagents[rid] = math.max(0, have)
+        end
+    end
+    local function CraftsFrom(avail)
+        local c = math.huge
+        for rid, q in pairs(rec.r) do
+            if not (rec.vendor and rec.vendor[rid]) and not IsVendor(rid) then
+                c = math.min(c, math.floor((avail[rid] or 0) / q))
+            end
+        end
+        return c == math.huge and 0 or c
+    end
+    if left > 0 and rec and canMake then
+        local crafts = math.min(math.ceil(left / rec.n), CraftsFrom(myReagents))
+        if crafts > 0 then
+            local bars = math.min(left, crafts * rec.n)
+            r.make = { bars = bars, crafts = crafts, mine = {}, ask = {}, n = rec.n, r = rec.r, vendor = rec.vendor }
+            for rid, q in pairs(rec.r) do r.make.mine[rid] = crafts * q end
+            left = left - bars
+        end
+    end
+
+    -- other characters' bars
     local offers = {}
     for name, data in pairs(realm) do
         if name ~= me and (not faction or not data.faction or data.faction == faction) then
@@ -503,8 +575,48 @@ local function Coverage(bundle, idx, used)
             left = left - take
         end
     end
+
+    -- still short: other characters' reagents, sent to me to make the rest
+    local extraLogins = 0
+    if left > 0 and rec and canMake then
+        local crafts = math.ceil(left / rec.n)
+        local ask, ok, who = {}, true, {}
+        for rid, q in pairs(rec.r) do
+            if not (rec.vendor and rec.vendor[rid]) and not IsVendor(rid) then
+                local usedMine = r.make and r.make.mine[rid] or 0
+                local need = crafts * q - math.max(0, (myReagents[rid] or 0) - usedMine)
+                if need > 0 then
+                    local got, spokenR = 0, used.alts[rid] or 0
+                    for name, data in pairs(realm) do
+                        if name ~= me and (not faction or not data.faction or data.faction == faction) then
+                            local bags, bank, mail = Holdings(name)
+                            local give = Give(bags, bank, rid, math.huge, mail)
+                            local s = math.min(spokenR, give); give = give - s; spokenR = spokenR - s
+                            if give > 0 and got < need then
+                                got = got + give
+                                who[name] = true
+                            end
+                        end
+                    end
+                    if got < need then ok = false end
+                    ask[rid] = need
+                end
+            end
+        end
+        if ok then
+            r.make = r.make or { bars = 0, crafts = 0, mine = {}, ask = {}, n = rec.n, r = rec.r, vendor = rec.vendor }
+            r.make.bars = r.make.bars + left
+            r.make.crafts = r.make.crafts + crafts
+            for rid, n in pairs(ask) do r.make.ask[rid] = n end
+            for rid, q in pairs(rec.r) do
+                r.make.mine[rid] = math.min(myReagents[rid] or 0, (r.make.mine[rid] or 0) + crafts * q - (ask[rid] or 0))
+            end
+            for _ in pairs(who) do extraLogins = extraLogins + 1 end
+            left = 0
+        end
+    end
     r.short = left
-    r.logins = left > 0 and 99 or #r.alts
+    r.logins = left > 0 and 99 or (#r.alts + extraLogins)
     return r
 end
 
@@ -532,76 +644,180 @@ local function BestBundle(crate, idx, used)
     return best, all
 end
 
-local function CrateRows(add, me)
-    local crates = MyCrates()
-    if #crates == 0 then return end
-    local idx = NameIndex()
-    -- what earlier requests already claim from the alts
+-- What earlier requests and requested crates already take: { bags, alts }, and
+-- how many crates of each kind are requested.
+local function CrateUsed(me)
     local used = { bags = {}, alts = {} }
     for id, n in pairs(Remaining(me)) do used.alts[id] = n end
-    -- crates already requested: their bundle's part from my bags stays theirs
     local requested = {}
     local mine = RequestOf(me)
     for _, c in ipairs(mine and mine.crates or {}) do
         requested[c.label] = (requested[c.label] or 0) + 1
         used.bags[c.id] = (used.bags[c.id] or 0) + (c.mine or 0)
+        for rid, n in pairs(c.reagents or {}) do used.bags[rid] = (used.bags[rid] or 0) + n end
     end
-    add({ head = "Waylaid crates in your bags" })
+    return used, requested
+end
+
+-- Take a picked bundle out of what's left, so the next crate doesn't count it.
+local function Claim(used, best)
+    if not best or best.short > 0 then return end
+    used.bags[best.id] = (used.bags[best.id] or 0) + best.mine
+    local fromAlts = 0
+    for _, a in ipairs(best.alts) do fromAlts = fromAlts + a.n end
+    used.alts[best.id] = (used.alts[best.id] or 0) + fromAlts
+    if best.make then
+        for rid, n in pairs(best.make.mine) do used.bags[rid] = (used.bags[rid] or 0) + n end
+        for rid, n in pairs(best.make.ask) do used.alts[rid] = (used.alts[rid] or 0) + n end
+    end
+end
+
+local function ItemName(id) return (UI.ItemNameQuality(id)) end
+
+-- One line about the pick, shared by the Requests tab and the crate tooltip.
+-- Returns text, and the request it needs ({[id] = n}, or nil when you can fill it yourself).
+local function Describe(best)
+    if not best then return "|cffff7070can't fill yet|r" end
+    if best.short > 0 then
+        local text = ("|cffff7070can't fill yet|r - closest: %d %s (have %d, short %d)"):format(
+            best.n, best.name, best.n - best.short, best.short)
+        local others = {}
+        for _, m in ipairs(best.makers or {}) do
+            if m ~= Alts.MyName() then others[#others + 1] = NameOf(m) end
+        end
+        if #others > 0 then text = text .. " - " .. table.concat(others, ", ") .. " can make it" end
+        return text
+    end
+    local parts = {}
+    local inBags = best.mine - (best.fromMail or 0) - (best.fromBank or 0)
+    if inBags > 0 then parts[#parts + 1] = inBags .. " in your bags" end
+    if (best.fromMail or 0) > 0 then parts[#parts + 1] = best.fromMail .. " in your mail" end
+    if (best.fromBank or 0) > 0 then parts[#parts + 1] = best.fromBank .. " in your bank" end
+    local mk = best.make
+    local buy = {}
+    if mk and mk.bars > 0 then
+        local rs = {}
+        for rid, q in pairs(mk.r) do
+            rs[#rs + 1] = (mk.crafts * q) .. " " .. ItemName(rid)
+            if (mk.vendor and mk.vendor[rid]) or IsVendor(rid) then buy[#buy + 1] = (mk.crafts * q) .. " " .. ItemName(rid) end
+        end
+        parts[#parts + 1] = "make " .. mk.bars .. " from " .. table.concat(rs, " + ")
+    end
+    local wants = {}
+    for _, a in ipairs(best.alts) do
+        parts[#parts + 1] = NameOf(a.alt) .. " " .. a.n
+        wants[best.id] = (wants[best.id] or 0) + a.n
+    end
+    if mk then
+        for rid, n in pairs(mk.ask) do wants[rid] = (wants[rid] or 0) + n end
+    end
+    local needAlts = next(wants) ~= nil
+    local text = ("%s with |cffffffff%d %s|r: %s"):format(needAlts and "|cffffd25acan fill|r" or "|cff59d959fill it now|r",
+        best.n, best.name, table.concat(parts, ", "))
+    if mk and next(mk.ask) then
+        local a = {}
+        for rid, n in pairs(mk.ask) do a[#a + 1] = n .. " " .. ItemName(rid) end
+        text = text .. " - ask alts for " .. table.concat(a, ", ")
+    end
+    if #buy > 0 then text = text .. " - buy " .. table.concat(buy, ", ") end
+    return text, needAlts and wants or nil
+end
+
+-- Every crate in my bags with its pick, in bag order (each claims its items).
+local function CrateResults(me)
+    local crates = MyCrates()
+    if #crates == 0 then return {} end
+    local idx = NameIndex()
+    local used, requested = CrateUsed(me)
+    local out = {}
     for _, crate in ipairs(crates) do
         local label = crate.name:gsub("^Waylaid Crate:%s*", "")
-        local best, all
+        local e = { crate = crate, label = label }
         if (requested[label] or 0) > 0 then
             requested[label] = requested[label] - 1
+            e.requested = true
+        else
+            e.best, e.all = BestBundle(crate, idx, used)
+            Claim(used, e.best)
+        end
+        out[#out + 1] = e
+    end
+    return out
+end
+
+local function RequestCrate(me, e)
+    local best = e.best
+    local _, wants = Describe(best)
+    if not wants then return end
+    AddRequest(me, wants, "Crate: " .. e.label)
+    local r = RequestOf(me, true)
+    r.crates = r.crates or {}
+    r.crates[#r.crates + 1] = { label = e.label, id = best.id, n = best.n, mine = best.mine,
+        reagents = best.make and best.make.mine or nil }
+    local list = {}
+    for id, n in pairs(wants) do list[#list + 1] = n .. " " .. ItemName(id) end
+    Status(("Requested %s from alts for %s. The plan is below."):format(table.concat(list, ", "), e.label))
+end
+
+local function CrateRows(add, me)
+    local results = CrateResults(me)
+    if #results == 0 then return end
+    add({ head = "Waylaid crates in your bags" })
+    for _, e in ipairs(results) do
+        local crate = e.crate
+        if e.requested then
             add({ icon = crate.id, itemID = crate.id,
-                  text = "|cffffd25a" .. label .. "|r  |cff8fb8ffrequested - see the plan below|r" })
+                  text = "|cffffd25a" .. e.label .. "|r  |cff8fb8ffrequested - see the plan below|r" })
         else
-            best, all = BestBundle(crate, idx, used)
-        end
-        local status, button, action
-        if not all then
-            -- already listed as requested
-        elseif best and best.short == 0 then
-            local where = {}
-            if (best.fromMail or 0) > 0 then where[#where + 1] = best.fromMail .. " in your mail" end
-            if (best.fromBank or 0) > 0 then where[#where + 1] = best.fromBank .. " in your bank" end
-            local bankNote = #where > 0 and (" (" .. table.concat(where, ", ") .. ")") or ""
-            if best.mine >= best.n then
-                local take = {}
-                if (best.fromMail or 0) > 0 then take[#take + 1] = best.fromMail .. " from your mail" end
-                if (best.fromBank or 0) > 0 then take[#take + 1] = best.fromBank .. " from your bank" end
-                status = "|cff59d959fill it now with " .. best.n .. " " .. best.name
-                    .. (#take > 0 and (" - take " .. table.concat(take, " and ") .. " first") or " from your bags") .. "|r"
-            else
-                local who = {}
-                for _, a in ipairs(best.alts) do who[#who + 1] = NameOf(a.alt) .. " " .. a.n end
-                status = ("best: |cffffffff%d %s|r - you %d%s, %s"):format(best.n, best.name, best.mine, bankNote, table.concat(who, ", "))
-                local pick = best
-                button, action = "Request", function()
-                    AddRequest(me, { [pick.id] = pick.n - pick.mine }, "Crate: " .. label)
-                    local r = RequestOf(me, true)
-                    r.crates = r.crates or {}
-                    r.crates[#r.crates + 1] = { label = label, id = pick.id, n = pick.n, mine = pick.mine }
-                    Status(("Requested %d %s from alts for %s. The plan is below."):format(pick.n - pick.mine, pick.name, label))
-                end
+            local text, wants = Describe(e.best)
+            add({ icon = crate.id, itemID = crate.id, text = "|cffffd25a" .. e.label .. "|r  " .. text,
+                  button = wants and "Request" or nil, enabled = wants ~= nil,
+                  action = wants and function() RequestCrate(me, e) end or nil })
+            for _, c in ipairs(e.all or {}) do
+                local total = c.mine + (c.make and c.make.bars or 0)
+                for _, a in ipairs(c.alts) do total = total + a.n end
+                local mark = c.short == 0 and "|cff59d959ok|r" or ("|cff9e9ea8" .. (c.id and ("have " .. total) or "none seen") .. "|r")
+                add({ text = ("%d %s  %s"):format(c.n, c.name, mark), indent = true, muted = c.short > 0 })
             end
-            -- claim it so the next crate doesn't count the same items
-            used.bags[best.id] = (used.bags[best.id] or 0) + best.mine
-            used.alts[best.id] = (used.alts[best.id] or 0) + (best.n - best.mine)
-        else
-            status = best and ("|cffff7070can't fill yet|r - closest: %d %s (have %d, short %d)"):format(
-                    best.n, best.name, best.n - best.short, best.short)
-                or "|cffff7070can't fill yet|r"
         end
-        if all then
-            add({ icon = crate.id, itemID = crate.id, text = "|cffffd25a" .. label .. "|r  " .. status,
-                  button = button, enabled = button ~= nil, action = action })
-        end
-        for _, c in ipairs(all or {}) do
-            local total = c.mine
-            for _, a in ipairs(c.alts) do total = total + a.n end
-            local mark = c.short == 0 and "|cff59d959ok|r" or ("|cff9e9ea8" .. (c.id and ("have " .. total) or "none seen") .. "|r")
-            add({ text = ("%d %s  %s"):format(c.n, c.name, mark), indent = true, muted = c.short > 0 })
-        end
+    end
+end
+
+-- Crate tooltips: can I fill it, and from where.
+local function CrateTooltip(tt, data)
+    if tt ~= GameTooltip and tt ~= ItemRefTooltip then return end
+    if not (JQ.IsEnabled(KEY) and JaseQoLDB and Alts.MyName()) then return end
+    local id = data and data.id
+    if not id and tt.GetItem then
+        local _, link = tt:GetItem()
+        id = link and tonumber(link:match("item:(%d+)"))
+    end
+    local cached = id and db and db.crates and db.crates[id]
+    if not cached then return end
+    local me = Alts.MyName()
+    local pick
+    for _, e in ipairs(CrateResults(me)) do
+        if e.crate.id == id then pick = e; break end
+    end
+    if not pick then
+        -- not in my bags: judge it on its own
+        local used = CrateUsed(me)
+        pick = { best = (BestBundle({ bundles = cached.bundles }, NameIndex(), used)) }
+    end
+    tt:AddLine(" ")
+    if pick.requested then
+        tt:AddLine("|cff0cd29fJaseTools:|r requested from your alts - see the Requests tab", 1, 1, 1, true)
+    else
+        tt:AddLine("|cff0cd29fJaseTools:|r " .. (Describe(pick.best)), 1, 1, 1, true)
+    end
+    tt:Show()
+end
+
+if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tt, data) pcall(CrateTooltip, tt, data) end)
+else
+    for _, tt in ipairs({ GameTooltip, ItemRefTooltip }) do
+        if tt then pcall(tt.HookScript, tt, "OnTooltipSetItem", function(self) pcall(CrateTooltip, self) end) end
     end
 end
 
