@@ -2,6 +2,15 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### New
+- **Minimap button** - a round J button on the edge of the minimap: click for the JaseTools window, right-click for settings, drag it round the minimap to move it. Own toggle.
+
+### Fixed
+- The J button was invisible in v1.3.0 (its icon pointed at a folder that doesn't exist after the rename).
+- Alts, Send mats and Requests looked empty when the game reported a blank realm name: JaseTools now uses your last real realm name instead, and moves anything filed under the blank one back. Nothing was lost.
+
 ## v1.3.0 - 2026-11-22
 
 ### New

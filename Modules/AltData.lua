@@ -47,13 +47,54 @@ for _, p in ipairs(Alts.PROFESSIONS) do IS_PROF[p] = true end
 -------------------------------------------------------------------------------
 --  Storage
 -------------------------------------------------------------------------------
-function Alts.Realm() return REALM or GetRealmName() end
+-- The realm characters are filed under. WoW Forever sometimes reports a blank
+-- realm name (seen 22 Nov 2026), which would show an empty character list; then
+-- the last real realm name is used, or else the realm with the most characters.
+local function GameRealm()
+    local r = GetRealmName and GetRealmName()
+    if type(r) ~= "string" or r == "" then r = GetNormalizedRealmName and GetNormalizedRealmName() end
+    if type(r) == "string" and r ~= "" and not (issecretvalue and issecretvalue(r)) then return r end
+end
+
+local function FallbackRealm()
+    local db = JaseQoLDB
+    if not db then return nil end
+    if type(db.lastRealm) == "string" and db.lastRealm ~= "" then return db.lastRealm end
+    local best, most = nil, 0
+    for realm, chars in pairs(db.alts or {}) do
+        if realm ~= "" and type(chars) == "table" then
+            local n = 0
+            for _ in pairs(chars) do n = n + 1 end
+            if n > most then best, most = realm, n end
+        end
+    end
+    return best
+end
+
+function Alts.Realm()
+    return REALM or GameRealm() or FallbackRealm() or "?"
+end
 
 function Alts.RealmTable(realm)
     JaseQoLDB.alts = JaseQoLDB.alts or {}
     realm = realm or Alts.Realm()
     JaseQoLDB.alts[realm] = JaseQoLDB.alts[realm] or {}
     return JaseQoLDB.alts[realm]
+end
+
+-- Anything filed under a blank realm name goes back to the real realm.
+local function MergeBlankRealm(into)
+    local db = JaseQoLDB
+    if not (db and into and into ~= "") then return end
+    local function merge(t)
+        if type(t) ~= "table" or type(t[""]) ~= "table" then return end
+        t[into] = t[into] or {}
+        for k, v in pairs(t[""]) do if t[into][k] == nil then t[into][k] = v end end
+        t[""] = nil
+    end
+    merge(db.alts)
+    merge(db.bankMail and db.bankMail.receives)
+    merge(db.altRequest and db.altRequest.requests)
 end
 
 -- WoW Forever characters have a last name: UnitName returns it second.
@@ -71,10 +112,13 @@ end
 local function EnsureName()
     if NAME then return true end
     local n, sur = (UnitNameUnmodified or UnitName)("player")
-    local r = GetRealmName and GetRealmName()
-    if usable(n) and type(r) == "string" and r ~= "" then
+    local r = GameRealm()
+    if r and JaseQoLDB then JaseQoLDB.lastRealm = r end
+    r = r or FallbackRealm()
+    if usable(n) and r then
         NAME = usable(sur) and (n .. SEP .. sur) or n
         REALM = r
+        MergeBlankRealm(r)
         return true
     end
     return false

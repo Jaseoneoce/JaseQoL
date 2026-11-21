@@ -17,6 +17,17 @@ JQ.AddModule({
     default = true,
 })
 
+local MM_KEY = "minimapButton"
+JQ.AddModule({
+    key = MM_KEY,
+    label = "Minimap button",
+    description = "A J button on the edge of the minimap: click for the JaseTools window, right-click for settings. Drag it around the minimap to move it.",
+    default = true,
+})
+
+-- The addon folder keeps its old name (JaseQoL), so its files live there.
+local ICON = "Interface\\AddOns\\JaseQoL\\Media\\icon"
+
 local UI = JQ.UI
 local Hub = { tabs = {}, byKey = {} }
 local tabsOf = setmetatable({}, { __mode = "k" })   -- frame -> { key, buttons }
@@ -144,7 +155,7 @@ local function BuildButton()
         button:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
     end
     local icon = button:CreateTexture(nil, "ARTWORK")
-    icon:SetTexture("Interface\\AddOns\\JaseTools\\Media\\icon")
+    icon:SetTexture(ICON)
     icon:SetAllPoints()
     local hl = button:CreateTexture(nil, "HIGHLIGHT")
     hl:SetColorTexture(1, 1, 1, 0.15)
@@ -164,6 +175,75 @@ local function BuildButton()
     end)
 end
 
+-------------------------------------------------------------------------------
+--  Minimap button (round, sits on the minimap's edge; drag to move round it)
+-------------------------------------------------------------------------------
+local mmButton
+
+local function PlaceMinimapButton()
+    local angle = math.rad(db.minimapAngle or 225)
+    local radius = ((Minimap:GetWidth() or 140) / 2) + 6
+    mmButton:ClearAllPoints()
+    mmButton:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
+end
+
+local function BuildMinimapButton()
+    if mmButton or not Minimap then return end
+    mmButton = CreateFrame("Button", "JaseQoLMinimapButton", Minimap)
+    mmButton:SetSize(30, 30)
+    mmButton:SetFrameStrata("MEDIUM")
+    mmButton:SetFrameLevel((Minimap:GetFrameLevel() or 1) + 8)
+    mmButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    mmButton:RegisterForDrag("LeftButton")
+    local bg = mmButton:CreateTexture(nil, "BACKGROUND")
+    bg:SetSize(26, 26)
+    bg:SetPoint("CENTER")
+    bg:SetColorTexture(0, 0, 0, 0.6)
+    local icon = mmButton:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(22, 22)
+    icon:SetPoint("CENTER")
+    icon:SetTexture(ICON)
+    local hl = mmButton:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetSize(26, 26)
+    hl:SetPoint("CENTER")
+    hl:SetColorTexture(1, 1, 1, 0.15)
+    -- round it off
+    if mmButton.CreateMaskTexture then
+        for _, tex in ipairs({ bg, icon, hl }) do
+            local m = mmButton:CreateMaskTexture()
+            if m and tex.AddMaskTexture then
+                m:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+                m:SetAllPoints(tex)
+                tex:AddMaskTexture(m)
+            end
+        end
+    end
+    mmButton:SetScript("OnClick", function(_, mouse)
+        if mouse == "RightButton" then OpenSettings() else Hub.Toggle() end
+    end)
+    mmButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("JaseTools", 1, 1, 1)
+        GameTooltip:AddLine("Click: Inventory / Send mats", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("Right-click: settings", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("Drag: move it round the minimap", 0.8, 0.8, 0.8)
+        GameTooltip:Show()
+    end)
+    mmButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    mmButton:SetScript("OnDragStart", function(self)
+        self:SetScript("OnUpdate", function()
+            local mx, my = Minimap:GetCenter()
+            local cx, cy = GetCursorPosition()
+            local scale = Minimap:GetEffectiveScale()
+            if not (mx and cx) then return end
+            db.minimapAngle = math.deg(math.atan2(cy / scale - my, cx / scale - mx))
+            PlaceMinimapButton()
+        end)
+    end)
+    mmButton:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+    PlaceMinimapButton()
+end
+
 -- Minimap addon menu (AddonCompartmentFunc in the toc)
 function JaseQoL_OnAddonCompartmentClick(_, mouse)
     if mouse == "RightButton" then OpenSettings() else Hub.Toggle() end
@@ -179,7 +259,11 @@ JQ.byKey[KEY].onLoad = function(enabled)
     boot:SetScript("OnEvent", function()
         BuildButton()
         button:SetShown(JQ.IsEnabled(KEY))
+        BuildMinimapButton()
+        if mmButton then mmButton:SetShown(JQ.IsEnabled(MM_KEY)) end
     end)
 end
+JQ.byKey[MM_KEY].onEnable = function() if mmButton then mmButton:Show() end end
+JQ.byKey[MM_KEY].onDisable = function() if mmButton then mmButton:Hide() end end
 JQ.byKey[KEY].onEnable = function() if button then button:Show() end end
 JQ.byKey[KEY].onDisable = function() if button then button:Hide() end end

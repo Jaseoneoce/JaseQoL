@@ -22,6 +22,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 | **Auction house debug log** | Off by default. `/jahlog on` records every auction house call (and which addon made it), the server's replies, errors and blocked actions, and flags posts that get no reply. `/jahlog` shows the latest lines, `/jahlog mark <note>` adds a note. Saved at logout or `/reload`. | |
 | **Don't auto-accept escort quests** | Accepting an escort starts it straight away. When EllesmereUI's Quest Tracker auto-accepts quests, escort quests are left open for you to accept when ready. Spotted by the game's Escort tag or the quest text. `/jq escort` marks the open quest as an escort, `/jq escort no` as not one, `/jq escort list` / `clear`. In a group it also tells everyone (whisper to each party member plus party chat; raid chat in a raid) not to auto-accept or auto hand it in (`escortAnnounce`, once per quest every 10 minutes). | EllesmereUI Quest Tracker auto-accept |
 | **JaseTools button** | A J button you can drag anywhere: click for the JaseTools window (Inventory, Send mats, Requests, Settings tabs), right-click for Settings. Also in the minimap's addon menu. | |
+| **Minimap button** | A round J button on the minimap's edge: click for the JaseTools window, right-click for settings, drag it round the minimap. | |
 | **Mastercraft skin** | Skins Mastercraft in the EllesmereUI style (EUI window frames, neutral panels, your accent, your font) on top of Mastercraft's flat Classic look. Your previous Mastercraft look comes back if you switch it off. | EllesmereUI Blizzard Skins+, Mastercraft |
 | **GuildOS skin** | Skins GuildOS in the EllesmereUI style: neutral dark windows, grey hairlines, your EUI accent instead of its gold, your EUI font. On GuildOS's flat "GuildOS" style. | EllesmereUI Blizzard Skins+, GuildOS |
 
@@ -30,7 +31,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 - **JaseTools window → Settings tab** (`/jq`, or right-click the J button): every tweak with an On/Off switch and a tooltip
 - **Game menu → Options → AddOns → JaseTools**
 - **EllesmereUI options → JaseTools** (when EllesmereUI is installed)
-- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `profResize`, `boeGuard`, `ahCopperWarn`, `ahDebug`, `escortGuard`, `escortAnnounce`, `hubButton`, `mcSkin`, `gosSkin`)
+- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `profResize`, `boeGuard`, `ahCopperWarn`, `ahDebug`, `escortGuard`, `escortAnnounce`, `hubButton`, `minimapButton`, `mcSkin`, `gosSkin`)
 
 Every dependency is optional: a tweak whose addon is missing simply does nothing.
 
