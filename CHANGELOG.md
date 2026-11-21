@@ -2,7 +2,7 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
-## Unreleased
+## v1.3.1 - 2026-11-22
 
 ### New
 - **Minimap button** - a round J button on the edge of the minimap: click for the JaseTools window, right-click for settings, drag it round the minimap to move it. Own toggle.
