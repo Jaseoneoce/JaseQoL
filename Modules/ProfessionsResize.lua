@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Resizable profession window
+--  JaseTools: Resizable profession window
 --
 --  The game's profession window (ProfessionsFrame, the modern one WoW Forever
 --  uses) gets a grip in its bottom-right corner: drag to make it bigger, and

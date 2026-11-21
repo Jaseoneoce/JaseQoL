@@ -1,7 +1,7 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Settings tab
+--  JaseTools: Settings tab
 --
---  A "Settings" tab in the JaseQoL window: every tweak in groups, with an
+--  A "Settings" tab in the JaseTools window: every tweak in groups, with an
 --  On/Off switch, a one-line description and a tooltip with the full text.
 --  Tweaks that change only after a reload say so, and a "Reload UI" button
 --  appears once one of them is switched. /jq and a right-click on the J button

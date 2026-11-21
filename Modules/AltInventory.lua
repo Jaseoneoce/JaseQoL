@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Alt inventory window  (/jinv)
+--  JaseTools: Alt inventory window  (/jinv)
 --
 --  Every item on your characters on this realm in one list: icon, name, the
 --  total, and who has how many (bags / bank / mail). Search box, a chip per

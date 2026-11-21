@@ -1,4 +1,4 @@
-# Builds JaseQoL.zip and uploads it to CurseForge (and a GitHub release)
+# Builds JaseTools (folder JaseQoL) as JaseQoL.zip and uploads it to CurseForge (and a GitHub release)
 # whenever a version tag such as v1.0.0 is pushed.
 #
 # One-time setup on GitHub: Settings > Secrets and variables > Actions >
@@ -28,7 +28,7 @@ jobs:
       - name: Release notes for this tag
         run: |
           {
-            echo "JaseQoL is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase."
+            echo "JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase."
             echo
             awk -v tag="## ${GITHUB_REF_NAME} " 'index($0, tag) == 1 {on = 1} on && /^## v/ && index($0, tag) != 1 {exit} on {print}' CHANGELOG.md
           } > RELEASE_NOTES.md

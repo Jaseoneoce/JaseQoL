@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: BoE sell warning
+--  JaseTools: BoE sell warning
 --
 --  Selling a Bind on Equip item to a vendor (right-click with the merchant
 --  open) puts a big warning on screen and in chat, with the item link, so it

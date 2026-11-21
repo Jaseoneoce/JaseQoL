@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: auction house debug log
+--  JaseTools: auction house debug log
 --
 --  For tracking down auction house posts that time out. While it's on, it
 --  records to JaseQoLDB.ahDebug.log (saved at logout or /reload):
@@ -99,7 +99,7 @@ local function Args(...)
 end
 
 -- The addon behind a call: the first one in the call stack that isn't
--- JaseQoL, preferring a third-party addon over the game's own UI.
+-- JaseTools, preferring a third-party addon over the game's own UI.
 local function Caller()
     local stack = debugstack and debugstack(3, 20, 0) or ""
     local blizz
@@ -304,7 +304,7 @@ SlashCmdList.JASEQOLAHLOG = function(msg)
     else
         local log = DB().log
         JQ.Print(("AH debug log: %d lines (saved at logout or /reload). Latest:"):format(#log))
-        for i = math.max(1, #log - 24), #log do print("  " .. log[i]) end
+        for i = math.max(1, #log - 24), #log do JQ.Print(log[i]) end
     end
 end
 

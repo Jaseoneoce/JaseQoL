@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Request mats from alts
+--  JaseTools: Request mats from alts
 --
 --  1. Profession window (the game's own; Enchanting's craft window too): a
 --     side panel shows the selected recipe's reagents for N crafts: how many
@@ -8,7 +8,7 @@
 --  2. Plan: who sends what. Fewest logins first (alts that cover the most of
 --     what's still needed), then alts parked in a town with a bank, then items
 --     already in bags (no bank trip). Alts of the other faction can't mail you.
---  3. Requests tab (JaseQoL window): your requests, the plan as an action list
+--  3. Requests tab (JaseTools window): your requests, the plan as an action list
 --     ("Log in on Herbie S. - Ironforge / Bank: take ... / Mailbox: send to
 --     ..."), and on a supplying alt its job with two buttons:
 --       Pull from bank  - moves exactly what's needed from the bank to bags
@@ -26,7 +26,7 @@ local KEY = "altRequest"
 JQ.AddModule({
     key = KEY,
     label = "Request mats from alts",
-    description = "In your profession window, request a recipe's missing reagents from your alts. JaseQoL plans who sends what (fewest logins, alts parked in bank towns, bags before bank) and gives each alt a job with Pull from bank and Send buttons. Requests tab in the JaseQoL window. Needs Alt tracking.",
+    description = "In your profession window, request a recipe's missing reagents from your alts. JaseTools plans who sends what (fewest logins, alts parked in bank towns, bags before bank) and gives each alt a job with Pull from bank and Send buttons. Requests tab in the JaseTools window. Needs Alt tracking.",
     default = true,
 })
 
@@ -318,7 +318,7 @@ function SendNext()
     job.batch = batch
     job.mails = job.mails + 1
     Status(("Sending mail %d to %s..."):format(job.mails, Alts.Display(job.to)), true)
-    SendMail(Alts.MailName(job.to), "Requested mats", "Sent by JaseQoL (Request from alts)")
+    SendMail(Alts.MailName(job.to), "Requested mats", "Sent by JaseTools (Request from alts)")
 end
 
 local function StartSend(recipient)
@@ -327,7 +327,7 @@ local function StartSend(recipient)
     if InCombatLockdown() then return end
     if not Alts.HasFullName(recipient) then pcall(Alts.LearnNames) end
     if not Alts.HasFullName(recipient) then
-        Status("Mail needs " .. recipient .. "'s full name. Log in on " .. recipient .. " once so JaseQoL learns it.")
+        Status("Mail needs " .. recipient .. "'s full name. Log in on " .. recipient .. " once so JaseTools learns it.")
         return
     end
     for i = 1, MAX_ATTACH do
@@ -413,7 +413,7 @@ local function Rows()
         local steps, short = Plan(me)
         add({ head = "Plan" })
         if not steps or #steps == 0 then
-            add({ text = "None of your alts on this faction has these (as far as JaseQoL has seen).", muted = true })
+            add({ text = "None of your alts on this faction has these (as far as JaseTools has seen).", muted = true })
         end
         for n, s in ipairs(steps or {}) do
             local where = Alts.WhereText(s.alt)
@@ -1070,7 +1070,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
                 if not line:find("%.$") then line = line .. "." end
                 JQ.Print(line .. " The Requests tab has the list.")
             end
-            -- open the Requests tab straight away (not in combat, not over another JaseQoL tab)
+            -- open the Requests tab straight away (not in combat, not over another JaseTools tab)
             if not InCombatLockdown() and not (JQ.Hub.IsOpen and JQ.Hub.IsOpen()) then
                 JQ.Hub.Show("requests")
             end
@@ -1079,7 +1079,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
 end)
 
 -------------------------------------------------------------------------------
---  Keep amount prompt (JaseQoL's own little box: the game's StaticPopup
+--  Keep amount prompt (JaseTools's own little box: the game's StaticPopup
 --  system is left alone, so its protected confirmations never get tainted)
 -------------------------------------------------------------------------------
 local prompt

@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: GuildOS skin (EllesmereUI)
+--  JaseTools: GuildOS skin (EllesmereUI)
 --
 --  GuildOS paints everything from one palette (GuildOS.Colors, named tokens it
 --  re-points in place for its styles) and sets every font through

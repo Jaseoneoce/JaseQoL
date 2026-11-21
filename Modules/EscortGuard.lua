@@ -1,12 +1,12 @@
 -------------------------------------------------------------------------------
---  JaseQoL: don't auto-accept escort quests
+--  JaseTools: don't auto-accept escort quests
 --
 --  Accepting an escort quest starts the escort straight away. EllesmereUI's
 --  Quest Tracker can auto-accept quests; this keeps it from accepting escorts
 --  so the quest window stays open until you press Accept.
 --
 --  How: EllesmereUI asks EllesmereUIQuestTracker.Cfg("autoAccept") each time a
---  quest window opens. While an escort quest's window is open, JaseQoL answers
+--  quest window opens. While an escort quest's window is open, JaseTools answers
 --  "off" for that one question. EllesmereUI's files and settings are never
 --  changed; switching this off restores its own answer.
 --
@@ -31,7 +31,7 @@ local ANNOUNCE_KEY = "escortAnnounce"
 JQ.AddModule({
     key = ANNOUNCE_KEY,
     label = "Tell the group about escort quests",
-    description = "When you open an escort quest while in a group, JaseQoL tells everyone not to auto-accept or auto hand it in: a whisper to each party member and a message in party chat (in a raid, one message in raid chat). Said once per quest every 10 minutes.",
+    description = "When you open an escort quest while in a group, JaseTools tells everyone not to auto-accept or auto hand it in: a whisper to each party member and a message in party chat (in a raid, one message in raid chat). Said once per quest every 10 minutes.",
     default = true,
 })
 
@@ -130,7 +130,7 @@ local function Announce(id, title)
     local now = GetTime()
     if announced[id] and now - announced[id] < ANNOUNCE_EVERY then return end
     announced[id] = now
-    local msg = ("[JaseQoL] Escort detected: %s - do not auto-accept or auto hand in, wait for the group.")
+    local msg = ("JaseTools: Escort detected: %s - do not auto-accept or auto hand in, wait for the group.")
         :format(title or ("quest " .. id))
     local instance = LE_PARTY_CATEGORY_INSTANCE and IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
         and not IsInGroup(LE_PARTY_CATEGORY_HOME)

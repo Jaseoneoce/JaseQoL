@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: one window, tabs, and a minimap button
+--  JaseTools: one window, tabs, and a minimap button
 --
 --  The Alt Inventory (/jinv) and Send mats setup (/jmats) windows share one
 --  place on screen and carry a tab bar ("Inventory" | "Send mats"): a tab
@@ -12,8 +12,8 @@ local KEY = "hubButton"
 
 JQ.AddModule({
     key = KEY,
-    label = "JaseQoL button",
-    description = "A J button you can drag anywhere on screen; it opens the JaseQoL window (Inventory and Send mats tabs). Drag it to move it. Also in the minimap's addon menu.",
+    label = "JaseTools button",
+    description = "A J button you can drag anywhere on screen; it opens the JaseTools window (Inventory and Send mats tabs). Drag it to move it. Also in the minimap's addon menu.",
     default = true,
 })
 
@@ -72,13 +72,13 @@ function Hub.Toggle()
     Hub.Show((db and db.lastTab) or (Hub.tabs[1] and Hub.tabs[1].key))
 end
 
--- Tab bar on a window built by a module: title becomes "JaseQoL", tabs after it.
+-- Tab bar on a window built by a module: title becomes "JaseTools", tabs after it.
 function Hub.Attach(frame, key)
     if not frame or tabsOf[frame] then return end
     local entry = { key = key, buttons = {} }
     tabsOf[frame] = entry
     frame.hubTabs = entry.buttons
-    frame.title:SetText("JaseQoL")
+    frame.title:SetText("JaseTools")
     local prev = frame.title
     for _, t in ipairs(Hub.tabs) do
         local b = UI.Button(frame, t.label, 96, 20)
@@ -113,7 +113,7 @@ local button
 
 local function Tooltip(owner)
     GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
-    GameTooltip:SetText("JaseQoL", 1, 1, 1)
+    GameTooltip:SetText("JaseTools", 1, 1, 1)
     GameTooltip:AddLine("Click: Inventory / Send mats", 0.8, 0.8, 0.8)
     GameTooltip:AddLine("Right-click: settings", 0.8, 0.8, 0.8)
     GameTooltip:AddLine("Drag: move it anywhere", 0.8, 0.8, 0.8)
@@ -144,7 +144,7 @@ local function BuildButton()
         button:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
     end
     local icon = button:CreateTexture(nil, "ARTWORK")
-    icon:SetTexture("Interface\\AddOns\\JaseQoL\\Media\\icon")
+    icon:SetTexture("Interface\\AddOns\\JaseTools\\Media\\icon")
     icon:SetAllPoints()
     local hl = button:CreateTexture(nil, "HIGHLIGHT")
     hl:SetColorTexture(1, 1, 1, 0.15)

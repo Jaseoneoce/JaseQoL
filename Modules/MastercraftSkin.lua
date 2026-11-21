@@ -1,9 +1,9 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Mastercraft skin (EllesmereUI)
+--  JaseTools: Mastercraft skin (EllesmereUI)
 --
 --  Mastercraft has four looks of its own; its flat "Classic" one is built from
 --  plain coloured panels (1px-bordered backdrops). With this skin on:
---    * Mastercraft is put on Classic as it loads (JaseQoL loads first, so the
+--    * Mastercraft is put on Classic as it loads (JaseTools loads first, so the
 --      switch lands before Mastercraft reads it; your previous choice is kept
 --      and given back when the skin is switched off);
 --    * through EllesmereUI's third-party skinning API the windows get EUI's

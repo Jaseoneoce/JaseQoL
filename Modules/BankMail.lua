@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Send mats to bank alts
+--  JaseTools: Send mats to bank alts
 --
 --  Setup (/jmats, or "Setup" on the mailbox panel):
 --    * Categories = professions (+ "Bank" for anything a pure bank alt keeps).
@@ -193,7 +193,7 @@ function SendNext()
     job.mails = job.mails + 1
     local cats = table.concat(AltCategories(job.to), ", ")
     Status(("Sending mail %d to %s..."):format(job.mails, Alts.Display(job.to)), true)
-    SendMail(Alts.MailName(job.to), "Mats" .. (cats ~= "" and (": " .. cats) or ""), "Sent by JaseQoL")
+    SendMail(Alts.MailName(job.to), "Mats" .. (cats ~= "" and (": " .. cats) or ""), "Sent by JaseTools")
 end
 
 local function StartSend(alt)
@@ -210,7 +210,7 @@ local function StartSend(alt)
     if #queue == 0 then Status("Nothing in your bags for " .. Alts.Display(alt)) return end
     if not Alts.HasFullName(alt) then pcall(Alts.LearnNames) end
     if not Alts.HasFullName(alt) then
-        Status("Can't send yet: mail needs " .. alt .. "'s full name. Log in on " .. alt .. " once so JaseQoL learns their last name.")
+        Status("Can't send yet: mail needs " .. alt .. "'s full name. Log in on " .. alt .. " once so JaseTools learns their last name.")
         return
     end
     job = { to = alt, queue = queue, sent = {}, mails = 0 }
@@ -398,7 +398,7 @@ local function BuildPanel()
         self.altArea:SetHeight(math.max(1, math.ceil(#alts / 2)) * 38)
 
         if #alts == 0 then
-            self.listHead:SetText("Log in on your alts once so JaseQoL knows them.")
+            self.listHead:SetText("Log in on your alts once so JaseTools knows them.")
             self.list:SetItems({})
             self.summary:SetText("")
             self.send:SetEnabledLook(false)

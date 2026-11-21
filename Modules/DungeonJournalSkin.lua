@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Dungeon Journal skin (EllesmereUI)
+--  JaseTools: Dungeon Journal skin (EllesmereUI)
 --
 --  Paints the ForeverDungeonJournal window in the EllesmereUI house style
 --  through EllesmereUI's third-party skinning API (EllesmereUI.RegisterSkin),

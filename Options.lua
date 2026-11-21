@@ -1,7 +1,7 @@
 -------------------------------------------------------------------------------
---  JaseQoL: options
+--  JaseTools: options
 --
---  * EllesmereUI options panel: a "JaseQoL" section with one toggle per module
+--  * EllesmereUI options panel: a "JaseTools" section with one toggle per module
 --    (via EllesmereUI.RegisterPlugin).
 --  * /jq            open that page (or list the toggles if EUI is missing)
 --    /jq list       list every module and whether it is on
@@ -32,7 +32,7 @@ end
 
 if EllesmereUI and EllesmereUI.RegisterPlugin then
     EllesmereUI.RegisterPlugin(PLUGIN_ID, {
-        label = "JaseQoL",
+        label = "JaseTools",
         modules = {
             {
                 key = "General",
@@ -46,11 +46,11 @@ if EllesmereUI and EllesmereUI.RegisterPlugin then
 end
 
 -------------------------------------------------------------------------------
---  Game menu > Options > AddOns > JaseQoL: one checkbox per module.
+--  Game menu > Options > AddOns > JaseTools: one checkbox per module.
 -------------------------------------------------------------------------------
 local function RegisterBlizzardSettings()
     if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterAddOnSetting) then return end
-    local category = Settings.RegisterVerticalLayoutCategory("JaseQoL")
+    local category = Settings.RegisterVerticalLayoutCategory("JaseTools")
     local makeCheckbox = Settings.CreateCheckbox or Settings.CreateCheckBox
     local db = JaseQoLDB.modules
     for _, spec in ipairs(JQ.modules) do
@@ -84,7 +84,7 @@ local function List()
     JQ.Print("modules (type /jq <key> to toggle):")
     for _, spec in ipairs(JQ.modules) do
         local on = JQ.IsEnabled(spec.key)
-        print(("  %s%s|r  |cffaaaaaa%s|r  %s"):format(
+        JQ.Print(("%s%s|r  |cffaaaaaa%s|r  %s"):format(
             on and "|cff33ff33ON  " or "|cffff4444OFF ", spec.label, spec.key,
             spec.needsReload and "(reload)" or ""))
     end
@@ -92,6 +92,7 @@ end
 
 SLASH_JASEQOL1 = "/jq"
 SLASH_JASEQOL2 = "/jaseqol"
+SLASH_JASEQOL3 = "/jasetools"
 SlashCmdList.JASEQOL = function(msg)
     msg = strtrim(msg or "")
     if msg == "" then

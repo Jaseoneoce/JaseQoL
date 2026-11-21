@@ -1,10 +1,10 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Alt tracking + item tooltips
+--  JaseTools: Alt tracking + item tooltips
 --
 --  Remembers, for every character you log in on (account-wide, per realm):
 --    class, level, faction, professions (with skill), and item counts in
 --    bags, bank (seen when you open the bank) and mailbox (seen when you open
---    the mailbox; mail JaseQoL sends to an alt is added straight away).
+--    the mailbox; mail JaseTools sends to an alt is added straight away).
 --  JaseQoLDB.alts[realm][name] = { class, level, faction, profs = {name=rank},
 --    bags = {[itemID]=n}, bank = {[itemID]=n}, mail = {[itemID]=n},
 --    bankTime, mailTime, time }
@@ -129,7 +129,7 @@ function Alts.HasFullName(name)
     return sur ~= nil
 end
 
--- Last names JaseQoL hasn't seen yet, borrowed from EllesmereUI: it records
+-- Last names JaseTools hasn't seen yet, borrowed from EllesmereUI: it records
 -- every character's full name ("First Last") when that character logs in.
 -- An old first-name-only record only takes a last name when exactly one of
 -- your characters has that first name.

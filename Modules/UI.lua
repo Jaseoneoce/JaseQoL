@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: shared UI helpers (flat EllesmereUI-style widgets)
+--  JaseTools: shared UI helpers (flat EllesmereUI-style widgets)
 --
 --  JQ.UI.Window(name, title, w, h)  draggable, resizable window with title + close
 --  JQ.UI.Button(parent, label, w, h) flat button with :SetOn(bool)
@@ -17,7 +17,7 @@ local WHITE = "Interface\\Buttons\\WHITE8X8"
 local S    -- EllesmereUI skin facade, if present
 
 if EllesmereUI and EllesmereUI.RegisterSkin then
-    EllesmereUI.RegisterSkin("JaseQoL Windows", function(facade) S = facade end)
+    EllesmereUI.RegisterSkin("JaseTools Windows", function(facade) S = facade end)
 end
 
 function UI.Accent()
@@ -293,7 +293,7 @@ end
 
 local GetItemInfoFn = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 
--- Name + quality for an item id: live item info first, then what JaseQoL has
+-- Name + quality for an item id: live item info first, then what JaseTools has
 -- remembered from scans (JaseQoLDB.items[id] = { n = name, q = quality }).
 function UI.ItemNameQuality(id)
     local name, _, q = GetItemInfoFn(id)

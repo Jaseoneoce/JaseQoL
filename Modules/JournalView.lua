@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Dungeon Journal (new view)
+--  JaseTools: Dungeon Journal (new view)
 --
 --  A lighter, list-based window over ForeverDungeonJournal's own data
 --  (FDJ.DB / FDJ.ORDER). It never edits that addon; it reads its tables and
@@ -433,7 +433,7 @@ end
 
 -------------------------------------------------------------------------------
 --  Party check: the game says who has a quest in their log; party members who
---  run JaseQoL too answer with done / in log / not started (addon messages).
+--  run JaseTools too answer with done / in log / not started (addon messages).
 -------------------------------------------------------------------------------
 local PARTY_PREFIX = "JaseQoL"
 local party = {}            -- [first name] = { [questID] = "d" | "l" | "n" }
@@ -473,7 +473,7 @@ end
 
 local QuestDone, QuestInLog = QuestDone, QuestInLog
 
--- state for a party member: "d" / "l" / "n", or nil when unknown; known = from JaseQoL
+-- state for a party member: "d" / "l" / "n", or nil when unknown; known = from JaseTools
 local function PartyState(m, id)
     local t = party[m.name]
     if t and t[id] then return t[id], true end
@@ -1156,7 +1156,7 @@ local function QuestLines(q, dungeonName, d, rowWidth)
                 local st = PartyState(m, q.id)
                 if st == "d" then where, col = "done", STATE_HEX.d
                 elseif allKnown then where, col = "done", STATE_HEX.d
-                else where = "unknown (no JaseQoL)" end
+                else where = "unknown (no JaseTools)" end
             end
             parts[#parts + 1] = ("|cff%s%s|r |cff9e9ea8%s|r"):format(col, m.name, where)
         end
@@ -1869,7 +1869,7 @@ local function Build()
         GameTooltip:SetText("Party check", 1, 1, 1)
         GameTooltip:AddLine("Who in your party has these quests. Names are coloured:", 0.85, 0.85, 0.88, true)
         GameTooltip:AddLine("|cff59d959done|r  |cffffd233in their log|r  |cff7f7f85not started|r  |cffffffffunknown|r", 1, 1, 1)
-        GameTooltip:AddLine("Done and chain steps come from party members who also run JaseQoL; for others the game only tells \"in their log\".", 0.62, 0.62, 0.66, true)
+        GameTooltip:AddLine("Done and chain steps come from party members who also run JaseTools; for others the game only tells \"in their log\".", 0.62, 0.62, 0.66, true)
         GameTooltip:Show()
     end)
     win.chipParty:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1887,7 +1887,7 @@ local function Build()
             if e.q.noteQuestLink then add(e.q.noteQuestLink.id) end
         end
         local ok = PartyAsk(ids)
-        if ok and force then JQ.Print("Party check sent. Party members with JaseQoL answer in a moment.") end
+        if ok and force then JQ.Print("Party check sent. Party members with JaseTools answer in a moment.") end
         return ok
     end
     PartyRefresh = function()
@@ -1992,7 +1992,7 @@ JQ.byKey[KEY].onLoad = function()
     state.boss = nil
 
     if EllesmereUI and EllesmereUI.RegisterSkin then
-        EllesmereUI.RegisterSkin("JaseQoL Dungeon Journal", function(facade) S = facade end)
+        EllesmereUI.RegisterSkin("JaseTools Dungeon Journal", function(facade) S = facade end)
     end
 
     local boot = CreateFrame("Frame")

@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: auction house copper warning
+--  JaseTools: auction house copper warning
 --
 --  WoW Forever's auction house doesn't post single items (gear, recipes,
 --  scrolls...) whose price has copper in it: the server never answers, so the

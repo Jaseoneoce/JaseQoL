@@ -1,6 +1,6 @@
 # Changelog
 
-JaseQoL is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
+JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
 ## Unreleased
 
@@ -11,6 +11,7 @@ JaseQoL is built with AI assistance: written with Claude Code (Anthropic), direc
 - **Lockpicking** is a Send mats category, for sending lockboxes to a rogue alt (alts with Lockpicking get it by default).
 
 ### Changed
+- **JaseQoL is now JaseTools.** Every name you see says JaseTools (window, button, settings, chat lines start "JaseTools:"); `/jasetools` works alongside `/jq`. The addon folder, your saved settings and the GitHub address are unchanged, so nothing needs reinstalling.
 - Dungeon Journal: reward items in a quest's Rewards line are item links - hover one for its tooltip, shift-click to link it in chat.
 - Send mats: the Jewelcrafting and Inscription tabs are gone (neither is in WoW Forever).
 - Send mats setup: items already assigned to another category show it after their name, e.g. "Jet Black Feather (Leatherworking)".

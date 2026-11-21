@@ -1,9 +1,9 @@
 -------------------------------------------------------------------------------
---  JaseQoL: Core
+--  JaseTools: Core
 --
 --  Every tweak lives in Modules\ and registers itself here with JQ.AddModule.
 --  Each module gets an on/off switch saved in JaseQoLDB.modules[key]
---  (true = on). Switches show in EllesmereUI's options (JaseQoL section) and
+--  (true = on). Switches show in EllesmereUI's options (JaseTools section) and
 --  under /jq. Modules marked needsReload only change after a /reload.
 -------------------------------------------------------------------------------
 local ADDON_NAME, JQ = ...
@@ -30,7 +30,7 @@ function JQ.IsEnabled(key)
 end
 
 function JQ.Print(msg)
-    print("|cff0cd29fJaseQoL|r: " .. tostring(msg))
+    print("|cff0cd29fJaseTools|r: " .. tostring(msg))
 end
 
 function JQ.SetEnabled(key, value)

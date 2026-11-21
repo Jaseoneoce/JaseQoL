@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  JaseQoL: XP Level Colour  (was the EllesmereUIXPLevelColor plugin)
+--  JaseTools: XP Level Colour  (was the EllesmereUIXPLevelColor plugin)
 --
 --  Replaces EllesmereUI.GetLevelDifficultyColor (used by the unit frame
 --  "Level Text: Difficulty Color" option and by the nameplates) with the
