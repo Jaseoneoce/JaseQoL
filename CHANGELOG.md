@@ -7,7 +7,6 @@ JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Co
 ### New
 - **Waylaid crates in the Requests tab** - every waylaid crate in your bags is listed with each of its bundles and whether your characters can fill it (counting your bags plus your alts' bags and banks). JaseTools picks the easiest bundle (fill it now from your bags, else the fewest alt logins) and shows who has it; **Request** asks your alts for the missing part and gives them the usual jobs (pull from bank, send). Two crates never count the same items.
 - **Flag items your quests need** - items a quest in your log asks for that a vendor would also buy (like Scorpok Pincer) get a yellow "QST" tag on their bag slot, a "Needed for: <quest> (3/8)" line on their tooltip, and a big warning if you sell one, so you can buy it back. Stays on until you hand the quest in.
-
 - **Quests category in EllesmereUI bags** - the All Items view gets a Quests category holding every quest item: pure quest items and anything a quest in your log needs (like Scorpok Pincer). It updates as you pick up and hand in quests. Items you assigned to a category yourself stay where you put them.
 
 ### Changed
