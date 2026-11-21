@@ -2,6 +2,11 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### New
+- **Flag items your quests need** - items a quest in your log asks for that a vendor would also buy (like Scorpok Pincer) get a yellow "Quest" tag on their bag slot, a "Needed for: <quest> (3/8)" line on their tooltip, and a big warning if you sell one, so you can buy it back. Stays on until you hand the quest in.
+
 ## v1.3.1 - 2026-11-22
 
 ### New

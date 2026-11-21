@@ -25,6 +25,7 @@ Modules\BankMail.lua
 Modules\AltRequest.lua
 Modules\ProfessionsResize.lua
 Modules\BoEGuard.lua
+Modules\QuestItemGuard.lua
 Modules\AHCopperWarn.lua
 Modules\AHDebug.lua
 Modules\EscortGuard.lua
