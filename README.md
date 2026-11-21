@@ -19,6 +19,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 | **Resizable profession window** | Drag the grip in the profession window's bottom-right corner to make it bigger; the size sticks. Right-click the grip to reset. | |
 | **Warn when selling BoE items** | Selling a Bind on Equip item to a vendor shows a big warning so you can buy it back. For a BoE label on bag slots, use EllesmereUI > Bags > Show BoE / Warbound Text. | |
 | **Flag items your quests need** | Items a quest in your log asks for (like Scorpok Pincer) get a yellow "QST" tag on their bag slot, a "Needed for" tooltip line, and a warning if you sell one. | |
+| **Quests category in EllesmereUI bags** | A Quests category in the All Items view with every quest item, including items a quest in your log needs. Your own item assignments still win. | EllesmereUI Bags |
 | **Warn about copper in auction prices** | WoW Forever's auction house won't post single items (gear, recipes, scrolls) when the price has copper in it, and the sell window hangs. Posting one with copper warns you to relist at whole silver. Changes nothing. |  |
 | **Auction house debug log** | Off by default. `/jahlog on` records every auction house call (and which addon made it), the server's replies, errors and blocked actions, and flags posts that get no reply. `/jahlog` shows the latest lines, `/jahlog mark <note>` adds a note. Saved at logout or `/reload`. | |
 | **Don't auto-accept escort quests** | Accepting an escort starts it straight away. When EllesmereUI's Quest Tracker auto-accepts quests, escort quests are left open for you to accept when ready. Spotted by the game's Escort tag or the quest text. `/jq escort` marks the open quest as an escort, `/jq escort no` as not one, `/jq escort list` / `clear`. In a group it also tells everyone (whisper to each party member plus party chat; raid chat in a raid) not to auto-accept or auto hand it in (`escortAnnounce`, once per quest every 10 minutes). | EllesmereUI Quest Tracker auto-accept |
@@ -30,7 +31,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 ## Switching tweaks on and off
 
 - **JaseTools window → Settings tab** (`/jq`, or right-click the J button or the minimap button): every tweak with an On/Off switch and a tooltip. This is the only settings page; JaseTools adds nothing to EllesmereUI's options or the game's AddOns list.
-- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `profResize`, `boeGuard`, `questItemGuard`, `ahCopperWarn`, `ahDebug`, `escortGuard`, `escortAnnounce`, `hubButton`, `minimapButton`, `mcSkin`, `gosSkin`)
+- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `profResize`, `boeGuard`, `questItemGuard`, `questBagCategory`, `ahCopperWarn`, `ahDebug`, `escortGuard`, `escortAnnounce`, `hubButton`, `minimapButton`, `mcSkin`, `gosSkin`)
 
 Every dependency is optional: a tweak whose addon is missing simply does nothing.
 

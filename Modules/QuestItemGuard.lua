@@ -17,7 +17,14 @@ local KEY = "questItemGuard"
 JQ.AddModule({
     key = KEY,
     label = "Flag items your quests need",
-    description = "Items a quest in your log asks for (like Scorpok Pincer) get a yellow \"Quest\" tag on their bag slot and a \"Needed for\" line on their tooltip, and selling one to a vendor shows a big warning so you can buy it back.",
+    description = "Items a quest in your log asks for (like Scorpok Pincer) get a yellow \"QST\" tag on their bag slot and a \"Needed for\" line on their tooltip, and selling one to a vendor shows a big warning so you can buy it back.",
+    default = true,
+})
+local CAT_KEY = "questBagCategory"
+JQ.AddModule({
+    key = CAT_KEY,
+    label = "Quests category in EllesmereUI bags",
+    description = "Adds a Quests category to EllesmereUI's bags (All Items view) holding every quest item: pure quest items and items a quest in your log needs (like Scorpok Pincer). Items you've assigned to a category yourself stay where you put them. Needs EllesmereUI Bags.",
     default = true,
 })
 
@@ -179,6 +186,67 @@ end
 if C and C.UseContainerItem then hooksecurefunc(C, "UseContainerItem", CheckSale) end
 
 -------------------------------------------------------------------------------
+--  EllesmereUI bags: a "Quests" category (its public virtual-category API).
+--  It answers before EllesmereUI's own rules, so pure quest items land here
+--  too; items the player assigned to a category themselves stay put.
+-------------------------------------------------------------------------------
+local CAT_ID = "JaseTools.Quests"
+local catRegistered = false
+local QUEST_CLASS = (Enum and Enum.ItemClass and Enum.ItemClass.Questitem) or 12
+
+local function IsQuestItem(itemLink, itemID, bag, slot)
+    if bag and slot and C and C.GetContainerItemQuestInfo then
+        local q = C.GetContainerItemQuestInfo(bag, slot)
+        if q and (q.isQuestItem or q.questID) then return true end
+    end
+    local classID = select(6, ((C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant)(itemLink or itemID))
+    if classID == QUEST_CLASS then return true end
+    -- needed by a quest in my log (only for my own bags)
+    if bag and need and next(need) then
+        local name = NameOf(itemLink or itemID)
+        if name and need[name:lower()] then return true end
+    end
+    return false
+end
+
+local function SyncCategory()
+    local CM = _G.EUI_CategoryManager
+    if not (CM and CM.RegisterVirtualCategory) then return end
+    local want = JQ.IsEnabled(CAT_KEY)
+    if want and not catRegistered then
+        catRegistered = CM:RegisterVirtualCategory(CAT_ID, {
+            name = "Quests",
+            icon = "Crosshair_Quest_64",
+            isAtlas = true,
+            order = -100,
+            classify = function(itemLink, itemID, bag, slot)
+                return IsQuestItem(itemLink, itemID, bag, slot)
+            end,
+        }) and true or false
+    elseif not want and catRegistered then
+        CM:UnregisterVirtualCategory(CAT_ID)
+        catRegistered = false
+    end
+end
+
+-- the needed list changed: ask EllesmereUI to sort the bags again
+local lastSig
+local function RefreshCategory()
+    if not catRegistered then return end
+    local keys = {}
+    for k in pairs(need) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local sig = table.concat(keys, "\n")
+    if sig == lastSig then return end
+    lastSig = sig
+    local CM = _G.EUI_CategoryManager
+    if CM and CM.RefreshVirtualCategories then CM:RefreshVirtualCategories() end
+end
+
+JQ.byKey[CAT_KEY].onEnable = SyncCategory
+JQ.byKey[CAT_KEY].onDisable = SyncCategory
+
+-------------------------------------------------------------------------------
 --  Keep the list current
 -------------------------------------------------------------------------------
 local ev = CreateFrame("Frame")
@@ -187,13 +255,15 @@ for _, e in ipairs({ "PLAYER_LOGIN", "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUES
     pcall(ev.RegisterEvent, ev, e)
 end
 local pending
-ev:SetScript("OnEvent", function()
+ev:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_LOGIN" then pcall(SyncCategory) end
     if pending then return end
     pending = true
     C_Timer.After(0.3, function()
         pending = nil
         Rebuild()
         RepaintAll()
+        pcall(RefreshCategory)
     end)
 end)
 
