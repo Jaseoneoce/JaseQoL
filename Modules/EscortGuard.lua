@@ -27,6 +27,13 @@ JQ.AddModule({
     description = "Accepting an escort quest starts the escort straight away. When EllesmereUI's Quest Tracker auto-accepts quests, this leaves escort quests open for you to accept when your group is ready. Escorts are spotted by the game's Escort tag or the quest text; /jq escort marks the open quest as an escort, /jq escort no as not one.",
     default = true,
 })
+local ANNOUNCE_KEY = "escortAnnounce"
+JQ.AddModule({
+    key = ANNOUNCE_KEY,
+    label = "Tell the group about escort quests",
+    description = "When you open an escort quest while in a group, JaseQoL tells everyone not to auto-accept or auto hand it in: a whisper to each party member and a message in party chat (in a raid, one message in raid chat). Said once per quest every 10 minutes.",
+    default = true,
+})
 
 local ESCORT_TAG = (Enum and Enum.QuestTag and Enum.QuestTag.Escort) or 84
 
@@ -93,6 +100,68 @@ local function Blocked()
 end
 
 -------------------------------------------------------------------------------
+--  Tell the group
+-------------------------------------------------------------------------------
+local SEP = (Constants and Constants.CharacterNameSeparatorConsts
+    and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR) or " "
+local ANNOUNCE_EVERY = 600
+local announced = {}   -- [questID] = GetTime() of the last announcement
+
+-- Who to whisper: "First Last" on WoW Forever (UnitName's second value is
+-- the last name there), else the name with its realm.
+local function WhisperName(unit)
+    local first, second = (UnitNameUnmodified or UnitName)(unit)
+    if type(first) ~= "string" or first == "" or first == UNKNOWNOBJECT then return nil end
+    if issecretvalue and (issecretvalue(first) or issecretvalue(second)) then return nil end
+    if type(second) == "string" and second ~= "" then
+        if Constants and Constants.CharacterNameSeparatorConsts then return first .. SEP .. second end
+        return first .. "-" .. second
+    end
+    return first
+end
+
+local function Send(msg, chatType, target)
+    local send = (C_ChatInfo and C_ChatInfo.SendChatMessage) or SendChatMessage
+    if send then pcall(send, msg, chatType, nil, target) end
+end
+
+local function Announce(id, title)
+    if not JQ.IsEnabled(ANNOUNCE_KEY) or not (IsInGroup and IsInGroup()) then return end
+    local now = GetTime()
+    if announced[id] and now - announced[id] < ANNOUNCE_EVERY then return end
+    announced[id] = now
+    local msg = ("[JaseQoL] Escort detected: %s - do not auto-accept or auto hand in, wait for the group.")
+        :format(title or ("quest " .. id))
+    local instance = LE_PARTY_CATEGORY_INSTANCE and IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
+        and not IsInGroup(LE_PARTY_CATEGORY_HOME)
+    if IsInRaid and IsInRaid() then
+        Send(msg, instance and "INSTANCE_CHAT" or "RAID")
+        return
+    end
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if UnitExists(unit) and UnitIsPlayer(unit) then
+            local name = WhisperName(unit)
+            if name then Send(msg, "WHISPER", name) end
+        end
+    end
+    Send(msg, instance and "INSTANCE_CHAT" or "PARTY")
+end
+
+-- Announce on every escort quest window, whether or not auto-accept is on.
+local function OnDetail()
+    if not JQ.IsEnabled(KEY) then return end
+    local id, title, text, objective = OpenQuest()
+    if not id then
+        id = GetQuestID and GetQuestID()
+        if not id or id == 0 then return end
+        title, text, objective = GetTitleText and GetTitleText(), GetQuestText and GetQuestText(),
+            GetObjectiveText and GetObjectiveText()
+    end
+    if IsEscort(id, title, text, objective) then Announce(id, title) end
+end
+
+-------------------------------------------------------------------------------
 --  Wrap EllesmereUI Quest Tracker's setting lookup
 -------------------------------------------------------------------------------
 local wrapped = false
@@ -113,8 +182,10 @@ local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("QUEST_FINISHED")
+ev:RegisterEvent("QUEST_DETAIL")
 ev:SetScript("OnEvent", function(_, event, name)
     if event == "QUEST_FINISHED" then told = nil; return end
+    if event == "QUEST_DETAIL" then OnDetail(); return end
     if event == "PLAYER_LOGIN" or name == "EllesmereUIQuestTracker" or name == "JaseQoL" then Wrap() end
 end)
 
