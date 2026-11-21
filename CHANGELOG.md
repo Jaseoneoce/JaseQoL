@@ -2,7 +2,7 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
-## Unreleased
+## v1.3.0 - 2026-11-22
 
 ### New
 - **Don't auto-accept escort quests** - accepting an escort starts it straight away, so when EllesmereUI's Quest Tracker auto-accepts quests, escort quests are now left open for you to accept when your group is ready (a chat line says why). Escorts are spotted by the game's Escort tag or the quest text; `/jq escort` marks the open quest as an escort, `/jq escort no` as not one. In a group, JaseQoL also tells everyone: a whisper to each party member and a party chat message (raid chat in a raid), "Escort detected - do not auto-accept or auto hand in", once per quest every 10 minutes (toggle: Tell the group about escort quests).
