@@ -145,11 +145,11 @@ local function Missed(kind, base, restedBonus, all)
     local plain = base + restedBonus
     if wr < WELLRESTED_MAX then
         local missing = WELLRESTED_MAX - wr
-        out[#out + 1] = { xp = math.floor(plain * missing / 100 + 0.5),
+        out[#out + 1] = { xp = math.floor(plain * missing / 100 + 0.5), pct = missing,
             what = wr > 0 and ("Well-Rested " .. wr .. "/" .. WELLRESTED_MAX) or "no Well-Rested" }
     end
     if kind == "kill" and not food then
-        out[#out + 1] = { xp = math.floor(plain * FOOD_PCT / 100 + 0.5), what = "no Well Fed" }
+        out[#out + 1] = { xp = math.floor(plain * FOOD_PCT / 100 + 0.5), pct = FOOD_PCT, what = "no Well Fed" }
     end
     local kept = {}
     for _, m in ipairs(out) do if m.xp > 0 then kept[#kept + 1] = m end end
@@ -191,12 +191,14 @@ local function OnXP()
     if #parts > 0 then line = line .. " (" .. table.concat(parts, ", ") .. ")" end
     local missed = Missed(kind, base, restedBonus, all)
     if missed then
-        local total, why = 0, {}
+        -- "missed 33 (8%)" in red, then the breakdown in light orange
+        local total, pct, why = 0, 0, {}
         for _, m in ipairs(missed) do
-            total = total + m.xp
-            why[#why + 1] = m.what .. ": " .. Num(m.xp)
+            total, pct = total + m.xp, pct + m.pct
+            why[#why + 1] = m.what .. " " .. m.pct .. "%: " .. Num(m.xp)
         end
-        line = line .. " |cffff5050missed " .. Num(total) .. " (" .. table.concat(why, ", ") .. ")|r"
+        line = line .. " |cffff5050missed " .. Num(total) .. " (" .. pct .. "%)|r"
+            .. " |cffffb070(" .. table.concat(why, ", ") .. ")|r"
     end
     JQ.Print(line)
 end
