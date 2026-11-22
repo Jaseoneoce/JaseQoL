@@ -9,7 +9,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 | Tweak | What it does | Needs |
 |---|---|---|
 | **XP Level Colour** | Colours unit frame and nameplate level text by whether the mob gives XP: red, orange, yellow, green, grey (grey = no XP), using the classic grey-level formula. | EllesmereUI ("Level Text: Difficulty Color" on) |
-| **Experience in chat** | A chat line for every XP gain: how much, from which mob or quest, rested bonus, and how far to the next level. | |
+| **Experience in chat** | A chat line for every XP gain, with the rested bonus in blue. | |
 | **Dungeon Journal Skin** | Skins the Dungeon Journal window in the EllesmereUI style through EllesmereUI's skinning API. | EllesmereUI Blizzard Skins+, Dungeon Journal |
 | **Dungeon Journal: new view** | `/jdj`: a cleaner, list-based Dungeon Journal: dungeon list with quest progress, bosses, a loot grid with filters (usable by me, hide owned), quests with status, live progress, quest chains, needed items, summon chains, Show on map / Show turn-in, Share and Track. The original window is one click away (Classic view). | Dungeon Journal |
 | **Alt tracking** | Remembers each character's professions and what's in their bags, bank and mailbox (bank and mail are read when you open them). Characters show as first name + last initial. | |
