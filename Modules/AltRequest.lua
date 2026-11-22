@@ -903,6 +903,63 @@ local function RequestCrate(me, e)
     Status(("Requested %s from alts for %s. The plan is below."):format(table.concat(list, ", "), e.label))
 end
 
+-------------------------------------------------------------------------------
+--  Buy list: what the plan says to buy (crates' cheapest shortfall, request
+--  items no alt has), and an Auctionator shopping list made from it.
+-------------------------------------------------------------------------------
+local SHOP_LIST = "JaseTools"
+
+local function ShoppingListAPI()
+    local api = Auctionator and Auctionator.API and Auctionator.API.v1
+    if api and api.CreateShoppingList and api.ConvertToSearchString then return api end
+end
+
+-- toBuy = {[id] = qty}, order = { id, ... } (in the order they come up)
+local function BuyList(me)
+    local toBuy, order = {}, {}
+    local function want(id, n)
+        if not id or not n or n <= 0 or IsVendor(id) then return end
+        if not toBuy[id] then order[#order + 1] = id end
+        toBuy[id] = (toBuy[id] or 0) + n
+    end
+    for _, e in ipairs(CrateResults(me)) do
+        local b = not e.requested and e.best and e.best.buy
+        if b then
+            if b.make then
+                for _, p in ipairs(b.parts) do want(p.id, p.qty) end
+            else
+                want(b.id, b.qty)
+            end
+        end
+    end
+    local mine = RequestOf(me)
+    if mine and next(mine.items) then
+        local _, short = Plan(me)
+        for id, n in pairs(short or {}) do want(id, n) end
+    end
+    return toBuy, order
+end
+
+local function MakeShoppingList(order, toBuy)
+    local api = ShoppingListAPI()
+    if not api then return end
+    local terms = {}
+    for _, id in ipairs(order) do
+        local name = ItemName(id)
+        local ok, s = pcall(api.ConvertToSearchString, "JaseTools",
+            { searchString = name, isExact = true, quantity = toBuy[id] })
+        terms[#terms + 1] = (ok and type(s) == "string") and s or name
+    end
+    local ok, err = pcall(api.CreateShoppingList, "JaseTools", SHOP_LIST, terms)
+    if ok then
+        local ahOpen = (AuctionHouseFrame and AuctionHouseFrame:IsShown()) or (AuctionFrame and AuctionFrame:IsShown())
+        Status(("Auctionator shopping list \"%s\" made with %d item(s)%s"):format(SHOP_LIST, #terms,
+            ahOpen and " - Auctionator is searching it now." or ". Open it in Auctionator's Shopping tab at the auction house."))
+    else
+        Status("Auctionator couldn't make the list: " .. tostring(err))
+    end
+end
+
 local function CrateRows(add, me)
     local results = CrateResults(me)
     if #results == 0 then return end
@@ -1073,6 +1130,21 @@ local function Rows()
             for id, n in pairs(short) do list[#list + 1] = ItemText(id, n) end
             add({ head = "Not on your alts" })
             add({ text = table.concat(list, ", ") .. "  |cff9e9ea8(buy or farm these)|r", indent = true })
+        end
+    end
+
+    -- Everything the plan says to buy, as one Auctionator shopping list.
+    local toBuy, order = BuyList(me)
+    if #order > 0 then
+        add({ head = "Buy on the auction house" })
+        local list = {}
+        for _, id in ipairs(order) do list[#list + 1] = ItemText(id, toBuy[id]) end
+        local can = ShoppingListAPI() ~= nil
+        add({ text = table.concat(list, ", "), indent = true,
+              button = can and "Shopping list" or nil, enabled = can,
+              action = can and function() MakeShoppingList(order, toBuy) end or nil })
+        if not can then
+            add({ text = "With Auctionator installed, this becomes a shopping list in one click.", muted = true, indent = true })
         end
     end
 
