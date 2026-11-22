@@ -24,7 +24,6 @@ local GROUPS = {
     { "Alts, bank & mail", "Alt inventory, Send mats, Requests and crates", {
         { "altTracker", { "altTooltip", "altInventory", "bankMail", "altRequest" } } } },
     { "Selling & auction house", "Sell warnings and auction house help", { "boeGuard", "ahCopperWarn", "ahDebug" } },
-    { "Professions", "The profession window", { "profResize" } },
     { "Skins", "EllesmereUI look for other addons", { "mcSkin", "gosSkin" } },
     { "Buttons", "Where to open JaseTools from", { "hubButton", "minimapButton" } },
 }

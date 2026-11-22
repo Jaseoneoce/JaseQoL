@@ -17,7 +17,6 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 | **Alt inventory window** | `/jinv`: every item on all your characters on this realm, with search and per-character / bags / bank / mail filters. | Alt tracking |
 | **Send mats to bank alts** | `/jmats`: assign materials to professions (or "Bank"); alts get the categories of the professions they have, and you can switch any on or off per alt. At the mailbox, pick an alt and press **Send mats**: every unbound stack for them is mailed (to their full name), 12 per mail. Each profession can also **send all BoE gear** (on for Enchanting by default). | Alt tracking |
 | **Request mats from alts** | In your profession window, request a recipe's missing reagents from your alts. JaseTools plans who sends what (fewest logins, alts parked in bank towns, bags before bank) and each alt gets a job in the **Requests** tab with **Pull from bank** and **Send** buttons (exact amounts).  **Waylaid crates** in your bags show up in the Requests tab too: which bundle you can fill, from whom, and a Request button.| Alt tracking |
-| **Resizable profession window** | Drag the grip in the profession window's bottom-right corner to make it bigger; the size sticks. Right-click the grip to reset. | |
 | **Warn when selling BoE items** | Selling a Bind on Equip item to a vendor shows a big warning so you can buy it back. For a BoE label on bag slots, use EllesmereUI > Bags > Show BoE / Warbound Text. | |
 | **Flag items your quests need** | Items a quest in your log asks for (like Scorpok Pincer) get a yellow "QST" tag on their bag slot, a "Needed for" tooltip line, and a warning if you sell one. | |
 | **Quests category in EllesmereUI bags** | A Quests category in the All Items view with every quest item, including items a quest in your log needs. Your own item assignments still win. | EllesmereUI Bags |
@@ -32,7 +31,7 @@ Small quality-of-life tweaks for **WoW Forever**, each with its own on/off switc
 ## Switching tweaks on and off
 
 - **JaseTools window → Settings tab** (`/jq`, or right-click the J button or the minimap button): every tweak in groups, with an on/off switch, a tooltip and a search box; settings that need another one sit indented under it. This is the only settings page; JaseTools adds nothing to EllesmereUI's options or the game's AddOns list.
-- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `xpChat`, `xpBreakdown`, `xpMissedRested`, `xpMissedFood`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `profResize`, `boeGuard`, `questItemGuard`, `questBagCategory`, `ahCopperWarn`, `ahDebug`, `escortGuard`, `escortAnnounce`, `hubButton`, `minimapButton`, `mcSkin`, `gosSkin`)
+- `/jq list` lists the tweaks, `/jq <key>` toggles one (`xpLevelColor`, `xpChat`, `xpBreakdown`, `xpMissedRested`, `xpMissedFood`, `djSkin`, `djOverhaul`, `altTracker`, `altTooltip`, `altInventory`, `bankMail`, `altRequest`, `boeGuard`, `questItemGuard`, `questBagCategory`, `ahCopperWarn`, `ahDebug`, `escortGuard`, `escortAnnounce`, `hubButton`, `minimapButton`, `mcSkin`, `gosSkin`)
 
 Every dependency is optional: a tweak whose addon is missing simply does nothing.
 
