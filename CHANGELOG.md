@@ -5,6 +5,7 @@ JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Co
 ## Unreleased
 
 ### Changed
+- **Send mats: who gets each profession, at a glance** - the profession list has a "Who gets it" column ("Po T.", "Po T. +1" or "nobody"); click it for a dropdown of your characters with a tick each (and their skill) to switch them. Replaces the bar at the bottom of the window.
 - **New Settings page** - groups down the left (Experience, Quests, Dungeon Journal, Alts, Selling & auction house, Professions, Skins, Buttons) with how many of their switches are on, the group's switches on the right with proper on/off switches, and a search box that finds any setting. Settings that need another one sit indented under it and grey out while it's off (e.g. XP breakdown and the missed-XP reminders under Experience in chat).
 
 ### Removed

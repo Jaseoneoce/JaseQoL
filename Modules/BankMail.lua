@@ -57,6 +57,27 @@ local function Receives(alt, cat)
     return data and data.profs and data.profs[cat] ~= nil or false
 end
 
+-- Switch whether alt gets cat; going back to the default clears the override.
+local function ToggleReceive(alt, cat)
+    local t = ReceivesTable(alt)
+    local data = Alts.RealmTable()[alt]
+    local default = data and data.profs and data.profs[cat] ~= nil or false
+    local now = not Receives(alt, cat)
+    if now ~= default then t[cat] = now else t[cat] = nil end
+end
+
+-- Who gets cat, as shown in the category list: "Po T.", "Po T. +1", or nil.
+local function WhoSummary(cat)
+    local names = {}
+    for _, e in ipairs(Alts.List(true)) do
+        if Receives(e.name, cat) then
+            names[#names + 1] = ("|cff%s%s|r"):format(UI.ClassHex(e.data.class), e.display)
+        end
+    end
+    if #names == 0 then return nil, 0 end
+    return names[1] .. (#names > 1 and ("|cff9e9ea8 +" .. (#names - 1) .. "|r") or ""), #names
+end
+
 local function AltCategories(alt)
     local out = {}
     for _, c in ipairs(Categories()) do
@@ -450,15 +471,92 @@ local setup
 
 local function BuildSetup()
     db.setupWin = db.setupWin or {}
-    setup = UI.Window("JaseQoLMatsSetup", "Send mats: setup", 860, 560, db.setupWin)
+    setup = UI.Window("JaseQoLMatsSetup", "Send mats: setup", 960, 560, db.setupWin)
     setup.cat = Alts.PROFESSIONS[1]
 
-    -- Categories column
+    -- The "who gets it" dropdown: one shared list of your characters with a
+    -- tick each, opened from a category's row.
+    local menu = CreateFrame("Frame", "JaseQoLMatsWhoMenu", setup)
+    menu:SetFrameStrata("DIALOG")
+    menu:SetClampedToScreen(true)
+    menu:EnableMouse(true)
+    UI.Fill(menu, 0.06, 0.06, 0.07, 0.98)
+    UI.Border(menu)
+    menu:Hide()
+    menu.rows = {}
+    tinsert(UISpecialFrames, "JaseQoLMatsWhoMenu")
+    setup.whoMenu = menu
+    function menu:Fill()
+        local cat = self.cat
+        local list = Alts.List(true)
+        for i, e in ipairs(list) do
+            local r = self.rows[i]
+            if not r then
+                r = CreateFrame("Button", nil, self)
+                r:SetHeight(24)
+                UI.Fill(r, 1, 1, 1, 0.08, "HIGHLIGHT")
+                r.check = r:CreateTexture(nil, "ARTWORK")
+                r.check:SetSize(16, 16)
+                r.check:SetPoint("LEFT", 6, 0)
+                r.check:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+                r.box = r:CreateTexture(nil, "BACKGROUND")
+                r.box:SetSize(14, 14)
+                r.box:SetPoint("CENTER", r.check, "CENTER")
+                r.box:SetColorTexture(1, 1, 1, 0.08)
+                r.name = UI.Text(r, 12)
+                r.name:SetPoint("LEFT", r.check, "RIGHT", 6, 0)
+                r.rank = UI.Text(r, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3], "RIGHT")
+                r.rank:SetPoint("RIGHT", -8, 0)
+                r:SetScript("OnClick", function(b)
+                    ToggleReceive(b.alt, menu.cat)
+                    menu:Fill()
+                    setup:Refresh()
+                end)
+                self.rows[i] = r
+            end
+            r:ClearAllPoints()
+            r:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 24)
+            r:SetPoint("TOPRIGHT", -4, -4 - (i - 1) * 24)
+            r.alt = e.name
+            r.name:SetText(("|cff%s%s|r"):format(UI.ClassHex(e.data.class), e.display))
+            local rank = e.data.profs and e.data.profs[cat]
+            r.rank:SetText(rank and tostring(rank) or "")
+            r.check:SetShown(Receives(e.name, cat))
+            r:Show()
+        end
+        for i = #list + 1, #self.rows do self.rows[i]:Hide() end
+        self:SetHeight(8 + #list * 24)
+    end
+    function menu:Open(anchor, cat)
+        if self:IsShown() and self.cat == cat then self:Hide() return end
+        self.cat, self.anchor = cat, anchor
+        self:SetWidth(math.max(180, anchor:GetWidth()))
+        self:ClearAllPoints()
+        self:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
+        self:Fill()
+        self:Show()
+    end
+    -- a click anywhere else closes it
+    menu:RegisterEvent("GLOBAL_MOUSE_DOWN")
+    menu:SetScript("OnEvent", function(self)
+        if self:IsShown() and not self:IsMouseOver() and not (self.anchor and self.anchor:IsMouseOver()) then
+            self:Hide()
+        end
+    end)
+    setup:HookScript("OnHide", function() menu:Hide() end)
+
+    -- Categories column: name, how many items, and who gets it
     local left = UI.Panel(setup)
     left:SetPoint("TOPLEFT", 10, -32)
-    left:SetPoint("BOTTOMLEFT", 10, 96)
-    left:SetWidth(170)
-    setup.cats = UI.List(left, 26, function(L)
+    left:SetPoint("BOTTOMLEFT", 10, 10)
+    left:SetWidth(330)
+    local colHead = UI.Text(left, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+    colHead:SetPoint("TOPLEFT", 10, -8)
+    colHead:SetText("Profession")
+    local colWho = UI.Text(left, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+    colWho:SetPoint("TOPLEFT", 172, -8)
+    colWho:SetText("Who gets it (click to change)")
+    setup.cats = UI.List(left, 30, function(L)
         local row = CreateFrame("Button", nil, L)
         UI.Fill(row, 1, 1, 1, 0.08, "HIGHLIGHT")
         row.sel = UI.Fill(row, 1, 1, 1, 0.10)
@@ -467,7 +565,37 @@ local function BuildSetup()
         row.name = UI.Text(row, 12)
         row.name:SetPoint("LEFT", 10, 0)
         row.count = UI.Text(row, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3], "RIGHT")
-        row.count:SetPoint("RIGHT", -8, 0)
+        row.count:SetPoint("RIGHT", row, "LEFT", 160, 0)
+        row.who = UI.Button(row, "", 140, 22)
+        row.who:SetPoint("LEFT", 168, 0)
+        row.who:SetPoint("RIGHT", -6, 0)
+        row.who.text:SetJustifyH("LEFT")
+        row.who.arrow = UI.Text(row.who, 10, 0.7, 0.7, 0.72, "RIGHT")
+        row.who.arrow:SetPoint("RIGHT", -6, 0)
+        row.who.arrow:SetText("v")
+        row.who.text:SetPoint("RIGHT", row.who.arrow, "LEFT", -4, 0)
+        row.who.row = row
+        row.who:SetScript("OnClick", function(self)
+            local r = self.row
+            setup.cat = r.cat
+            setup:Refresh()
+            menu:Open(self, r.cat)
+        end)
+        row.who:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Who gets " .. self.row.cat, 1, 1, 1)
+            local any = false
+            for _, e in ipairs(Alts.List(true)) do
+                if Receives(e.name, self.row.cat) then
+                    GameTooltip:AddLine(e.display, 0.85, 0.85, 0.88)
+                    any = true
+                end
+            end
+            if not any then GameTooltip:AddLine("Nobody yet.", 1, 0.45, 0.4) end
+            GameTooltip:AddLine("Click to pick. Alts with the profession get it by default.", 0.62, 0.62, 0.66, true)
+            GameTooltip:Show()
+        end)
+        row.who:SetScript("OnLeave", UI.HideTip)
         row:SetScript("OnClick", function(self) setup.cat = self.cat; setup:Refresh() end)
         return row
     end, function(row, d)
@@ -478,15 +606,17 @@ local function BuildSetup()
         row.bar:SetShown(sel)
         row.name:SetText(d.cat)
         row.count:SetText(d.n > 0 and d.n or "")
+        local who = WhoSummary(d.cat)
+        row.who.text:SetText(who or "|cffff7070nobody|r")
     end)
-    setup.cats:SetPoint("TOPLEFT", 2, -2)
+    setup.cats:SetPoint("TOPLEFT", 2, -24)
     setup.cats:SetPoint("BOTTOMRIGHT", -2, 2)
 
     -- Assigned items column
     local mid = UI.Panel(setup)
     mid:SetPoint("TOPLEFT", left, "TOPRIGHT", 8, 0)
     mid:SetPoint("BOTTOMLEFT", left, "BOTTOMRIGHT", 8, 0)
-    mid:SetWidth(300)
+    mid:SetWidth(270)
     setup.midHead = UI.Text(mid, 12)
     setup.midHead:SetPoint("TOPLEFT", 8, -8)
     setup.boeBtn = UI.Button(mid, "Also send all BoE gear", 150, 20)
@@ -556,7 +686,7 @@ local function BuildSetup()
     -- Your bags column (grouped by item type)
     local right = UI.Panel(setup)
     right:SetPoint("TOPLEFT", mid, "TOPRIGHT", 8, 0)
-    right:SetPoint("BOTTOMRIGHT", -10, 96)
+    right:SetPoint("BOTTOMRIGHT", -10, 10)
     local rightHead = UI.Text(right, 12)
     rightHead:SetPoint("TOPLEFT", 8, -8)
     rightHead:SetText("In your bags")
@@ -611,20 +741,6 @@ local function BuildSetup()
     end)
     setup.bags:SetPoint("TOPLEFT", 2, -28)
     setup.bags:SetPoint("BOTTOMRIGHT", -2, 2)
-
-    -- Who receives this category
-    local bottom = UI.Panel(setup)
-    bottom:SetPoint("TOPLEFT", left, "BOTTOMLEFT", 0, -8)
-    bottom:SetPoint("BOTTOMRIGHT", -10, 10)
-    setup.whoHead = UI.Text(bottom, 12)
-    setup.whoHead:SetPoint("TOPLEFT", 8, -8)
-    setup.whoHint = UI.Text(bottom, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
-    setup.whoHint:SetPoint("LEFT", setup.whoHead, "RIGHT", 10, 0)
-    setup.whoHint:SetText("Click to switch. Alts with the profession get it by default.")
-    setup.whoChips = {}
-    setup.whoArea = CreateFrame("Frame", nil, bottom)
-    setup.whoArea:SetPoint("TOPLEFT", 8, -30)
-    setup.whoArea:SetPoint("BOTTOMRIGHT", -8, 8)
 
     function setup:Refresh()
         if not self:IsShown() then return end
@@ -684,37 +800,6 @@ local function BuildSetup()
         end
         self.bags:SetItems(rows, true)
 
-        -- who gets it
-        self.whoHead:SetText("Who gets " .. cat)
-        for _, c in ipairs(self.whoChips) do c:Hide() end
-        local x, y = 0, 0
-        local areaW = self.whoArea:GetWidth()
-        for i, e in ipairs(Alts.List(true)) do
-            local c = self.whoChips[i]
-            if not c then
-                c = UI.Button(self.whoArea, "", 100, 24)
-                c:SetScript("OnClick", function(b)
-                    local t = ReceivesTable(b.alt)
-                    local data = Alts.RealmTable()[b.alt]
-                    local default = data and data.profs and data.profs[setup.cat] ~= nil or false
-                    local now = not Receives(b.alt, setup.cat)
-                    if now ~= default then t[setup.cat] = now else t[setup.cat] = nil end
-                    setup:Refresh()
-                end)
-                self.whoChips[i] = c
-            end
-            c.alt = e.name
-            local rank = e.data.profs and e.data.profs[cat]
-            c.text:SetText(("|cff%s%s|r%s"):format(UI.ClassHex(e.data.class), e.display, rank and ("  |cff9e9ea8" .. rank .. "|r") or ""))
-            local w = c.text:GetStringWidth() + 22
-            c:SetWidth(w)
-            if x + w > areaW and x > 0 then x, y = 0, y + 28 end
-            c:ClearAllPoints()
-            c:SetPoint("TOPLEFT", x, -y)
-            x = x + w + 6
-            c:SetOn(Receives(e.name, cat))
-            c:Show()
-        end
         if panel and panel:IsShown() then panel:Refresh() end
     end
 
