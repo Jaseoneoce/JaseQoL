@@ -2,7 +2,7 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
-## Unreleased
+## v1.5.3 - 2026-11-22
 
 ### Fixed
 - **Escorts could still be auto-accepted** (Suntara Stones was): EllesmereUI's auto-accept can run before the quest page is on screen, and the guard only looked once it was. It now checks the quest being offered straight away.
