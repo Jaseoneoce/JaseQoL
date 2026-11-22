@@ -4,7 +4,7 @@
 --  WoW Forever shows the XP for a kill as floating text over the mob, not in
 --  chat. This prints a chat line for every XP gain, read from the XP bar
 --  itself (so nothing is missed): the XP, and the rested part in blue.
---    "JaseTools: +156 XP (78 rested)"
+--    "JaseTools: +638 XP (319 rested)"
 -------------------------------------------------------------------------------
 local _, JQ = ...
 local KEY = "xpChat"
@@ -44,10 +44,13 @@ local function OnXP()
     Snapshot()
     if gained <= 0 or not JQ.IsEnabled(KEY) then return end
 
-    -- the XP, and the rested part of it in blue (what the rested pool went down by)
+    -- the XP, and the rested bonus in it in blue. Rested doubles kill XP, and the
+    -- rested pool goes down by the whole gain (seen in game: +638 took 638 off
+    -- the pool), so the bonus is half of what the pool lost.
     local line = "|cffb07bff+" .. Num(gained) .. " XP|r"
-    if restedUsed > 0 then
-        line = line .. " |cff4fa8ff(" .. Num(math.min(restedUsed, gained)) .. " rested)|r"
+    local bonus = math.floor(math.min(restedUsed, gained) / 2 + 0.5)
+    if bonus > 0 then
+        line = line .. " |cff4fa8ff(" .. Num(bonus) .. " rested)|r"
     end
     JQ.Print(line)
 end
