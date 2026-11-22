@@ -37,6 +37,12 @@ JQ.AddModule({
 
 local ESCORT_TAG = (Enum and Enum.QuestTag and Enum.QuestTag.Escort) or 84
 
+-- Escorts whose text doesn't give them away. More are learned as you play
+-- (see QUEST_ACCEPTED below), and /jq escort marks any by hand.
+local KNOWN = {
+    [3367] = "Suntara Stones",      -- Dorius Stonetender, Searing Gorge
+}
+
 -- softer hints: two of these together count as an escort
 local HINTS = {
     "to safety", "safely to", "safely out", "see me safely", "get me out", "protect me", "protect him",
@@ -57,7 +63,8 @@ local function Lower(s) return type(s) == "string" and s:lower() or "" end
 -- Is questID an escort? Returns true/false and why.
 local function IsEscort(questID, title, text, objective)
     local mark = DB().marks[questID]
-    if mark ~= nil then return mark, mark and "you marked it" or nil end
+    if mark ~= nil then return mark, mark and "marked as an escort" or nil end
+    if KNOWN[questID] then return true, "a known escort" end
     if C_QuestLog and C_QuestLog.GetQuestTagInfo then
         local ok, info = pcall(C_QuestLog.GetQuestTagInfo, questID)
         if ok and type(info) == "table" and info.tagID == ESCORT_TAG then return true, "the game tags it Escort" end
@@ -73,12 +80,11 @@ local function IsEscort(questID, title, text, objective)
 end
 JQ.IsEscortQuest = IsEscort
 
--- The quest whose details are showing now, if any.
+-- The quest being offered right now, if any. (Not "is the quest page on
+-- screen": EllesmereUI's auto-accept can run before the game has shown it.)
 local function OpenQuest()
     local id = GetQuestID and GetQuestID()
     if not id or id == 0 then return nil end
-    local panel = _G.QuestFrameDetailPanel
-    if panel and not panel:IsShown() then return nil end
     return id, GetTitleText and GetTitleText(), GetQuestText and GetQuestText(),
         GetObjectiveText and GetObjectiveText()
 end
@@ -178,14 +184,54 @@ local function Wrap()
     return true
 end
 
+-------------------------------------------------------------------------------
+--  Learn escorts: a quest just accepted whose log entry reads like an escort
+--  (or that the game tags Escort once it's in the log) is remembered, so it's
+--  never auto-accepted again on any of your characters, and the group still
+--  gets the warning.
+-------------------------------------------------------------------------------
+local function LogText(questID)
+    local parts = {}
+    if C_QuestLog and C_QuestLog.GetQuestObjectives then
+        local ok, objs = pcall(C_QuestLog.GetQuestObjectives, questID)
+        for _, o in ipairs(ok and objs or {}) do
+            if type(o.text) == "string" then parts[#parts + 1] = o.text end
+        end
+    end
+    return table.concat(parts, "\n")
+end
+
+local function OnAccepted(a1, a2)
+    if not JQ.IsEnabled(KEY) then return end
+    -- QUEST_ACCEPTED(questID), or (questLogIndex, questID) on older clients
+    local questID = (type(a2) == "number" and a2 > 0) and a2 or a1
+    if type(questID) ~= "number" or questID <= 0 then return end
+    local d = DB()
+    if d.marks[questID] ~= nil or KNOWN[questID] then return end
+    local title = C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(questID)
+    local escort = IsEscort(questID, title, "", LogText(questID))
+    if not escort then return end
+    d.marks[questID] = true
+    if title and title ~= "" then d.names[questID] = title end
+    JQ.Print(("|cffffd25a%s is an escort.|r Learned: it won't be auto-accepted again. Wrong? Open it and /jq escort no")
+        :format(title or ("quest " .. questID)))
+    Announce(questID, title)
+end
+
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("QUEST_FINISHED")
 ev:RegisterEvent("QUEST_DETAIL")
-ev:SetScript("OnEvent", function(_, event, name)
+ev:RegisterEvent("QUEST_ACCEPTED")
+ev:SetScript("OnEvent", function(_, event, name, a2)
     if event == "QUEST_FINISHED" then told = nil; return end
     if event == "QUEST_DETAIL" then OnDetail(); return end
+    if event == "QUEST_ACCEPTED" then
+        -- give the log a moment to fill in the objectives
+        if C_Timer then C_Timer.After(0.5, function() OnAccepted(name, a2) end) else OnAccepted(name, a2) end
+        return
+    end
     if event == "PLAYER_LOGIN" or name == "EllesmereUIQuestTracker" or name == "JaseQoL" then Wrap() end
 end)
 

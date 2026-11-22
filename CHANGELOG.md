@@ -2,6 +2,12 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### Fixed
+- **Escorts could still be auto-accepted** (Suntara Stones was): EllesmereUI's auto-accept can run before the quest page is on screen, and the guard only looked once it was. It now checks the quest being offered straight away.
+- Escorts whose text doesn't say so are covered too: Suntara Stones is known, and any quest you accept whose objectives read like an escort is learned - never auto-accepted again on any of your characters, and your group still gets the warning. `/jq escort` still marks any by hand.
+
 ## v1.5.2 - 2026-11-22
 
 ### Changed
