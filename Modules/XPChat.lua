@@ -18,6 +18,19 @@ JQ.AddModule({
     description = "Prints a chat line for every bit of experience you gain: how much, from which mob or quest, and how much was normal, rested bonus (blue) and XP buffs like Well Fed or Well-Rested (green, worked out from their percentages). WoW Forever otherwise only shows kill XP as floating text.",
     default = true,
 })
+local MISS_FOOD, MISS_WR = "xpMissedFood", "xpMissedRested"
+JQ.AddModule({
+    key = MISS_WR,
+    label = "Missed XP: Well-Rested",
+    description = "On the XP chat line, says in red how much XP you missed by not having Well-Rested (sleeping bag) at 3 stacks, on kills and quests.",
+    default = true,
+})
+JQ.AddModule({
+    key = MISS_FOOD,
+    label = "Missed XP: Well Fed",
+    description = "On the XP chat line, says in red how much XP you missed by not having the 5% XP food buff, on kills.",
+    default = true,
+})
 
 local lastXP, lastMax, lastLevel, restedBefore
 local source, sourceTime, sourceKind  -- the latest kill / quest, when, and "kill" / "quest"
@@ -177,12 +190,12 @@ local function Missed(kind, base, restedBonus, all)
     end
     local out = {}
     local plain = base + restedBonus
-    if wr < WELLRESTED_MAX then
+    if wr < WELLRESTED_MAX and JQ.IsEnabled(MISS_WR) then
         local missing = WELLRESTED_MAX - wr
         out[#out + 1] = { xp = math.floor(plain * missing / 100 + 0.5), pct = missing,
             what = wr > 0 and ("Well-Rested " .. wr .. "/" .. WELLRESTED_MAX) or "no Well-Rested" }
     end
-    if kind == "kill" and not food then
+    if kind == "kill" and not food and JQ.IsEnabled(MISS_FOOD) then
         out[#out + 1] = { xp = math.floor(plain * FOOD_PCT / 100 + 0.5), pct = FOOD_PCT, what = "no Well Fed" }
     end
     local kept = {}
