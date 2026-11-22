@@ -2,6 +2,12 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### Fixed
+- XP in chat missed your XP buffs on kills (it said "no Well-Rested" with 2 stacks up): the game hides buff details while you're in combat, when kill XP arrives. JaseTools now remembers your XP buffs whenever it can read them and uses that in combat, dropping any that have run out.
+- The missed note shows the share too, with the breakdown in light orange: "missed 29 (8%) (no Well-Rested 3%: 11, no Well Fed 5%: 18)".
+
 ## v1.5.0 - 2026-11-22
 
 ### New

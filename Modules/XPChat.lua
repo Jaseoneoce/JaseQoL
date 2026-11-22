@@ -69,28 +69,62 @@ local function TooltipLines(aura, index)
     return out
 end
 
-local function XPBuffs()
-    local list = {}
+local function Readable(v) return v ~= nil and not (issecretvalue and issecretvalue(v)) end
+
+-- Read the XP buffs from the buff bar now. Returns the list, and whether
+-- everything could be read (in combat the game may hide buff details).
+local function ScanXPBuffs()
+    local list, complete = {}, true
     local get = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
-    if not get then return list end
+    if not get then return list, false end
     for i = 1, 40 do
         local ok, aura = pcall(get, "player", i, "HELPFUL")
-        if not ok or not aura then break end
+        if not ok then complete = false break end
+        if not aura then break end
         local name = aura.name
-        if type(name) == "string" and not (issecretvalue and issecretvalue(name)) then
-            for _, text in ipairs(TooltipLines(aura, i)) do
-                local pct = not (issecretvalue and issecretvalue(text))
-                    and (text:match("[Ee]xperience gain[s]? increased by (%d+)%%")
-                      or text:match("[Ee]xperience[^%d]-increased by (%d+)%%")
-                      or text:match("(%d+)%% more experience"))
+        if type(name) == "string" and Readable(name) then
+            local lines = TooltipLines(aura, i)
+            if #lines == 0 then complete = false end
+            for _, text in ipairs(lines) do
+                if not Readable(text) then complete = false break end
+                local pct = text:match("[Ee]xperience gain[s]? increased by (%d+)%%")
+                    or text:match("[Ee]xperience[^%d]-increased by (%d+)%%")
+                    or text:match("(%d+)%% more experience")
                 if pct then
-                    list[#list + 1] = { name = name, pct = tonumber(pct) }
+                    local exp = aura.expirationTime
+                    list[#list + 1] = { name = name, pct = tonumber(pct),
+                        expires = (Readable(exp) and type(exp) == "number" and exp > 0) and exp or nil }
                     break
                 end
             end
+        else
+            complete = false
         end
     end
-    return list
+    return list, complete
+end
+
+-- The last full read, kept for combat (kills give their XP while you're
+-- still in combat, when the buff details may be hidden).
+local known = {}
+local function RememberXPBuffs()
+    local list, complete = ScanXPBuffs()
+    if complete then known = list end
+    return list, complete
+end
+
+local function XPBuffs()
+    local list, complete = RememberXPBuffs()
+    if complete then return list end
+    -- couldn't read them all now: what we last saw, minus anything run out
+    local now = GetTime()
+    local out = {}
+    for _, b in ipairs(known) do
+        if not b.expires or b.expires > now then
+            out[#out + 1] = { name = b.name, pct = b.pct, expires = b.expires }
+        end
+    end
+    return out
 end
 JQ._XPBuffs = XPBuffs
 
@@ -205,13 +239,19 @@ end
 
 local ev = CreateFrame("Frame")
 for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_XP_UPDATE", "QUEST_TURNED_IN",
-    "CHAT_MSG_COMBAT_XP_GAIN", "PLAYER_TARGET_CHANGED", "UNIT_HEALTH" }) do
+    "CHAT_MSG_COMBAT_XP_GAIN", "PLAYER_TARGET_CHANGED", "UNIT_HEALTH",
+    "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED" }) do
     pcall(ev.RegisterEvent, ev, e)
 end
+pcall(ev.RegisterUnitEvent, ev, "UNIT_AURA", "player")
 
 ev:SetScript("OnEvent", function(_, event, a1)
     if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
         Snapshot()
+        pcall(RememberXPBuffs)
+    elseif event == "UNIT_AURA" or event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
+        -- keep the last readable list of XP buffs for kills made in combat
+        pcall(RememberXPBuffs)
     elseif event == "PLAYER_XP_UPDATE" then
         if a1 == nil or a1 == "player" then OnXP() end
     elseif event == "QUEST_TURNED_IN" then
