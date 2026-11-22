@@ -78,10 +78,13 @@ local function Rebuild()
 end
 
 local function NameOf(item)
-    if not item then return nil end
-    local name = GetItemInfoFn(item)
+    -- only item IDs and links (bag code can pass other things)
+    if type(item) ~= "number" and type(item) ~= "string" then return nil end
+    if issecretvalue and issecretvalue(item) then return nil end
+    local ok, name = pcall(GetItemInfoFn, item)
+    if not ok then name = nil end
     if not name and type(item) == "string" then name = item:match("%[(.-)%]") end
-    return name
+    return type(name) == "string" and name or nil
 end
 
 -- The quests that need this item, or nil.
@@ -95,7 +98,11 @@ JQ.QuestNeeds = Needed
 -------------------------------------------------------------------------------
 --  Bag slot tag
 -------------------------------------------------------------------------------
-local tagged = setmetatable({}, { __mode = "k" })   -- buttons we've looked at
+-- Kept in JaseTools' own tables, never written onto the game's bag buttons.
+local weak = { __mode = "k" }
+local itemOf = setmetatable({}, weak)    -- button -> item ID / link it shows
+local tagOf = setmetatable({}, weak)     -- button -> our "QST" text
+local styled = setmetatable({}, weak)
 
 -- Look like EllesmereUI's own slot text (its BoE label): same font, size,
 -- outline, shadow and corner, read from that label each time so it follows
@@ -113,7 +120,7 @@ local function Style(tag, btn)
             tag:SetPoint(p, rel or btn, rp or p, x or 0, y or 0)
             return
         end
-    elseif not rawget(btn, "_jqStyled") then
+    elseif not styled[btn] then
         local font, size = GameFontNormalSmall and GameFontNormalSmall:GetFont()
         tag:SetFont(font or STANDARD_TEXT_FONT, math.max(9, (size or 10) - 1), "OUTLINE")
     end
@@ -122,46 +129,51 @@ local function Style(tag, btn)
 end
 
 local function Paint(btn)
-    local item = rawget(btn, "_jqItem")
+    local item = itemOf[btn]
     local show = item and Needed(item) ~= nil
-    local tag = rawget(btn, "_jqQuestTag")
+    local tag = tagOf[btn]
     if show and not tag then
         local ref = rawget(btn, "BindTypeText")
         local parent = (type(ref) == "table" and ref.GetParent and ref:GetParent()) or rawget(btn, "_textOverlay") or btn
         tag = parent:CreateFontString(nil, "OVERLAY")
         tag:SetTextColor(1, 0.82, 0)
         tag:SetText("QST")
-        btn._jqQuestTag = tag
+        tagOf[btn] = tag
     end
     if tag then
-        if show then Style(tag, btn); btn._jqStyled = true end
+        if show then Style(tag, btn); styled[btn] = true end
         tag:SetShown(show and true or false)
     end
 end
 
 local function OnQuality(btn, _, item)
-    tagged[btn] = true
-    btn._jqItem = item
+    if type(btn) ~= "table" then return end
+    itemOf[btn] = item
     Paint(btn)
 end
 
 local function OnTexture(btn, texture)
+    if type(btn) ~= "table" then return end
     if texture == nil then
-        btn._jqItem = nil
-        local tag = rawget(btn, "_jqQuestTag")
+        itemOf[btn] = nil
+        local tag = tagOf[btn]
         if tag then tag:Hide() end
     end
 end
 
 local function RepaintAll()
-    for btn in pairs(tagged) do pcall(Paint, btn) end
+    for btn in pairs(itemOf) do pcall(Paint, btn) end
 end
 
+-- These run inside the game's own bag code: never let an error escape into it
+-- (it would break the bags; seen on a friend's default bags).
+local function SafeQuality(...) pcall(OnQuality, ...) end
+local function SafeTexture(...) pcall(OnTexture, ...) end
 if ItemButtonMixin then
-    if ItemButtonMixin.SetItemButtonQuality then hooksecurefunc(ItemButtonMixin, "SetItemButtonQuality", OnQuality) end
-    if ItemButtonMixin.SetItemButtonTexture then hooksecurefunc(ItemButtonMixin, "SetItemButtonTexture", OnTexture) end
+    if ItemButtonMixin.SetItemButtonQuality then hooksecurefunc(ItemButtonMixin, "SetItemButtonQuality", SafeQuality) end
+    if ItemButtonMixin.SetItemButtonTexture then hooksecurefunc(ItemButtonMixin, "SetItemButtonTexture", SafeTexture) end
 end
-if SetItemButtonQuality then hooksecurefunc("SetItemButtonQuality", OnQuality) end
+if SetItemButtonQuality then hooksecurefunc("SetItemButtonQuality", SafeQuality) end
 
 -------------------------------------------------------------------------------
 --  Tooltip line
@@ -297,4 +309,5 @@ JQ.byKey[KEY].onEnable = function() Rebuild(); RepaintAll() end
 JQ.byKey[KEY].onDisable = function() RepaintAll() end
 
 -- for tests
-JQ._QuestItemGuard = { Rebuild = Rebuild, Needed = Needed, Parse = ParseObjective, Paint = Paint }
+JQ._QuestItemGuard = { Rebuild = Rebuild, Needed = Needed, Parse = ParseObjective, Paint = Paint,
+    TagOf = function(btn) return tagOf[btn] end }

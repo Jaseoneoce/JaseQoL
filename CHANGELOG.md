@@ -2,6 +2,11 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### Fixed
+- **Bag errors with the game's default bags** (a friend's ContainerFrame error): the QST quest-item tag runs inside the bags' own refresh, and anything going wrong there broke the bag. It can no longer throw into the bag code, only accepts item IDs and links, and keeps its data in JaseTools instead of on the game's bag buttons.
+
 ## v1.5.3 - 2026-11-22
 
 ### Fixed
