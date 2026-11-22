@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## AllowLoadGameType: camelot
 ## Title: |cff0cd29fJaseTools|r
-## Notes: XP level colours, Dungeon Journal view and skin, alt inventory/tooltips, mats and waylaid crates from alts, resizable profession UI, BoE/quest-item/AH warnings, escort guard, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
+## Notes: XP level colours and XP in chat, Dungeon Journal view, alt inventory/tooltips, mats and waylaid crates from alts, resizable profession UI, BoE/quest-item/AH warnings, escort guard, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
 ## Author: jasone
 ## X-AI-Assisted: Built with AI assistance (Claude Code, Anthropic); directed and tested by Jase
 ## X-Website: https://github.com/Jaseoneoce/JaseQoL
