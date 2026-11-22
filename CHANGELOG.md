@@ -5,7 +5,7 @@ JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Co
 ## Unreleased
 
 ### Fixed
-- **Bag errors with the game's default bags** (a friend's ContainerFrame error): the QST quest-item tag runs inside the bags' own refresh, and anything going wrong there broke the bag. It can no longer throw into the bag code, only accepts item IDs and links, and keeps its data in JaseTools instead of on the game's bag buttons.
+- **"FontString:SetText(): Font not set" errors** with the game's default bags and loot window (no EllesmereUI): the QST quest-item tag set its text before it had a font. It now starts with one. The tag also runs inside the bags' and loot window's own refresh, where anything going wrong broke them, so it can no longer throw into that code, only accepts item IDs and links, and keeps its data in JaseTools instead of on the game's bag buttons.
 
 ## v1.5.3 - 2026-11-22
 

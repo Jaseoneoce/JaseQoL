@@ -135,10 +135,14 @@ local function Paint(btn)
     if show and not tag then
         local ref = rawget(btn, "BindTypeText")
         local parent = (type(ref) == "table" and ref.GetParent and ref:GetParent()) or rawget(btn, "_textOverlay") or btn
-        tag = parent:CreateFontString(nil, "OVERLAY")
+        -- created with a font (a text without one can't show anything: "Font
+        -- not set"), then styled like the slot's own text before "QST" goes in
+        tag = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        tagOf[btn] = tag
+        Style(tag, btn)
+        styled[btn] = true
         tag:SetTextColor(1, 0.82, 0)
         tag:SetText("QST")
-        tagOf[btn] = tag
     end
     if tag then
         if show then Style(tag, btn); styled[btn] = true end
