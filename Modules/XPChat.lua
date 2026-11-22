@@ -6,7 +6,7 @@
 --  itself (so nothing is missed): the XP, where it came from when it can tell
 --  (the mob you just killed, the quest you just handed in), and how much of it
 --  was normal, rested bonus (blue) and XP buffs (green).
---    "JaseTools: XP +624 (Tar Lurker, 300 normal + 300 rested + 9 Well-Rested + 15 Well Fed)"
+--    "JaseTools: XP +588 (Tar Lurker, 285 normal + 285 rested + 18 Well-Rested)"
 -------------------------------------------------------------------------------
 local _, JQ = ...
 local KEY = "xpChat"
@@ -41,8 +41,7 @@ end
 --  XP buffs: any buff whose tooltip says "Experience gains increased by N%"
 --  (the 5% food buff, Well-Rested from the sleeping bag at 1% a stack...).
 --  The game only reports the total XP, so their share is worked out from the
---  percentages: base x (1 + buffs) for a normal kill, and rested doubles the
---  base (assumed: the buffs add to the base, not to the rested bonus).
+--  percentages. They multiply the whole kill, rested bonus included.
 -------------------------------------------------------------------------------
 local function TooltipLines(aura, index)
     local data
@@ -93,30 +92,32 @@ local function Split(gained, restedUsed)
     local buffs = XPBuffs()
     local pct = 0
     for _, b in ipairs(buffs) do pct = pct + b.pct end
-    local base, restedBonus
-    if restedUsed > 0 then
-        -- the rested pool goes down by base x 2 (seen in game: +638 with no
-        -- buffs took 638 off the pool), so half of what it lost is the bonus
-        restedBonus = math.min(restedUsed, gained) / 2
-        base = restedBonus
-        if pct > 0 and gained - 2 * base < 0.5 then
-            -- the pool took the buff part too: split by the percentages instead
-            base = gained / (2 + pct / 100)
-            restedBonus = base
-        end
-    else
-        restedBonus = 0
-        base = gained / (1 + pct / 100)
-    end
-    local extra = math.max(0, gained - base - restedBonus)
-    for _, b in ipairs(buffs) do b.xp = pct > 0 and extra * b.pct / pct or 0 end
-    -- whole numbers that still add up to the gain
+    -- Seen in game: a 285 XP kill gives 570 rested (285 + 285) and 588 with
+    -- Well-Rested 3% (285 x 1.03 = 294, doubled = 588), and the rested pool
+    -- goes down by the whole gain. So the buffs multiply the whole kill, rested
+    -- bonus included: gained = base x (1 + buffs) x (1 + rested share).
+    local mult = 1 + pct / 100
+    local restedRaw = math.min(restedUsed, gained) / 2      -- rested part, buffs included
+    local base = (gained - restedRaw) / mult
+    local restedBonus = restedRaw / mult
+    -- whole numbers that still add up to the gain: normal and rested rounded,
+    -- the game's own rounding left with the buffs (588 = 285 + 285 + 18)
+    local n = math.floor(base + 0.5)
     local r = math.floor(restedBonus + 0.5)
-    local used = r
-    for _, b in ipairs(buffs) do b.xp = math.floor(b.xp + 0.5); used = used + b.xp end
+    local extra = math.max(0, gained - n - r)
+    local given = 0
+    for i, b in ipairs(buffs) do
+        if i == #buffs then
+            b.xp = extra - given
+        else
+            b.xp = math.floor((pct > 0 and extra * b.pct / pct or 0) + 0.5)
+            given = given + b.xp
+        end
+    end
     local kept = {}
     for _, b in ipairs(buffs) do if b.xp > 0 then kept[#kept + 1] = b end end
-    return gained - used, r, kept
+    if #buffs == 0 then n = gained - r end
+    return n, r, kept
 end
 
 local function OnXP()
