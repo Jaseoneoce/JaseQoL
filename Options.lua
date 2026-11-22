@@ -8,6 +8,7 @@
 --    /jq list       list every module and whether it is on
 --    /jq <key>      toggle a module, e.g. /jq xpLevelColor, /jq djSkin
 --    /jq escort ... escort quest marks (see Modules\EscortGuard.lua)
+--    /jq errors     JaseTools' error log (/jq errors clear empties it)
 -------------------------------------------------------------------------------
 local _, JQ = ...
 
@@ -33,6 +34,7 @@ SlashCmdList.JASEQOL = function(msg)
     if msg == "list" then return List() end
     local sub, rest = msg:match("^(%S+)%s*(.-)$")
     if sub and sub:lower() == "escort" and JQ.EscortCommand then return JQ.EscortCommand(rest) end
+    if sub and sub:lower() == "errors" and JQ.ErrorCommand then return JQ.ErrorCommand(rest) end
     for _, spec in ipairs(JQ.modules) do
         if spec.key:lower() == msg:lower() then
             return JQ.SetEnabled(spec.key, not JQ.IsEnabled(spec.key))

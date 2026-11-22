@@ -23,12 +23,13 @@ local GROUPS = {
     { "Dungeon Journal", "The new journal view and its skin", { "djOverhaul", "djSkin" } },
     { "Alts, bank & mail", "Alt inventory, Send mats, Requests and crates", {
         { "altTracker", { "altTooltip", "altInventory", "bankMail", "altRequest" } } } },
-    { "Selling & auction house", "Sell warnings and auction house help", { "boeGuard", "ahCopperWarn", "ahDebug" } },
+    { "Selling & auction house", "Sell warnings and auction house help", { "boeGuard", "ahCopperWarn" } },
     { "Skins", "EllesmereUI look for other addons", { "mcSkin", "gosSkin" } },
     { "Buttons", "Where to open JaseTools from", { "hubButton", "minimapButton" } },
+    { "Troubleshooting", "Error log and debug tools", { "errorNotify", "ahDebug" } },
 }
 local SLASH = {
-    djOverhaul = "/jdj", altInventory = "/jinv", bankMail = "/jmats", ahDebug = "/jahlog",
+    djOverhaul = "/jdj", altInventory = "/jinv", bankMail = "/jmats", ahDebug = "/jahlog", errorNotify = "/jq errors",
 }
 
 local win, db

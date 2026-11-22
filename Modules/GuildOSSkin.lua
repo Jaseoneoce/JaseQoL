@@ -54,7 +54,7 @@ end
 
 local function Repoint()
     if GuildOS and GuildOS.RepointColors and GuildOS.Colors then
-        pcall(GuildOS.RepointColors, GuildOS, Palette())
+        JQ.Try("GuildOS skin", GuildOS.RepointColors, GuildOS, Palette())
     end
 end
 

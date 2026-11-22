@@ -33,6 +33,59 @@ function JQ.Print(msg)
     print("|cff0cd29fJaseTools|r: " .. tostring(msg))
 end
 
+-------------------------------------------------------------------------------
+--  Error log: JaseTools' own errors, kept in JaseQoLDB.errors (newest first,
+--  50 at most; the same error again just counts up). Code that must never
+--  break the game's own windows runs through JQ.Try, which records the error
+--  instead of throwing. /jq errors shows the log (Modules\ErrorLog.lua).
+-------------------------------------------------------------------------------
+local MAX_ERRORS = 50
+local seenThisSession = {}
+
+function JQ.Error(where, err)
+    local msg = tostring(err or "?")
+    JQ._lastError = msg
+    local stack = debugstack and debugstack(3, 8, 0) or ""
+    -- keep our own lines of the stack: they say where it went wrong
+    local ours = {}
+    for line in stack:gmatch("[^\n]+") do
+        if line:find("JaseQoL", 1, true) then ours[#ours + 1] = line:gsub("^.-AddOns[/\\]", "") end
+        if #ours >= 4 then break end
+    end
+    local now = time and time() or 0
+    if JaseQoLDB then
+        local log = JaseQoLDB.errors or {}
+        JaseQoLDB.errors = log
+        for i, e in ipairs(log) do
+            if e.msg == msg and e.where == where then
+                e.count, e.last = (e.count or 1) + 1, now
+                table.remove(log, i)
+                table.insert(log, 1, e)
+                return
+            end
+        end
+        table.insert(log, 1, { where = where, msg = msg, stack = table.concat(ours, "\n"),
+            count = 1, first = now, last = now,
+            version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("JaseQoL", "Version") })
+        while #log > MAX_ERRORS do table.remove(log) end
+    end
+    -- a short note the first time an error turns up in a session
+    local key = where .. "|" .. msg
+    if not seenThisSession[key] then
+        seenThisSession[key] = true
+        if JQ.IsEnabled("errorNotify") then
+            JQ.Print("|cffff7070error in " .. where .. "|r (logged). Type /jq errors to see it.")
+        end
+    end
+end
+
+-- Run fn(...) and record any error instead of throwing it. Returns pcall's results.
+function JQ.Try(where, fn, ...)
+    local results = { pcall(fn, ...) }
+    if not results[1] then JQ.Error(where, results[2]) end
+    return unpack(results)
+end
+
 function JQ.SetEnabled(key, value)
     local spec = JQ.byKey[key]
     if not spec then return end
@@ -52,8 +105,8 @@ function JQ.ApplyChange(key, value)
         return
     end
     local fn = value and spec.onEnable or spec.onDisable
-    if fn then pcall(fn) end
-    if JQ.Hub then pcall(JQ.Hub.UpdateTabs) end
+    if fn then JQ.Try(spec.key .. (value and " (switching on)" or " (switching off)"), fn) end
+    if JQ.Hub then JQ.Try("window tabs", JQ.Hub.UpdateTabs) end
     JQ.Print(spec.label .. (value and " on." or " off."))
 end
 
@@ -67,7 +120,10 @@ ev:SetScript("OnEvent", function(self, _, name)
     for _, spec in ipairs(JQ.modules) do
         if spec.onLoad then
             local ok, err = pcall(spec.onLoad, JQ.IsEnabled(spec.key))
-            if not ok then geterrorhandler()(err) end
+            if not ok then
+                JQ.Error(spec.key .. " (loading)", err)
+                geterrorhandler()(err)
+            end
         end
     end
 end)

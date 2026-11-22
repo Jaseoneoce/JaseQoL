@@ -166,13 +166,13 @@ local function OnTexture(btn, texture)
 end
 
 local function RepaintAll()
-    for btn in pairs(itemOf) do pcall(Paint, btn) end
+    for btn in pairs(itemOf) do JQ.Try("QST tag", Paint, btn) end
 end
 
 -- These run inside the game's own bag code: never let an error escape into it
 -- (it would break the bags; seen on a friend's default bags).
-local function SafeQuality(...) pcall(OnQuality, ...) end
-local function SafeTexture(...) pcall(OnTexture, ...) end
+local function SafeQuality(...) JQ.Try("QST tag", OnQuality, ...) end
+local function SafeTexture(...) JQ.Try("QST tag", OnTexture, ...) end
 if ItemButtonMixin then
     if ItemButtonMixin.SetItemButtonQuality then hooksecurefunc(ItemButtonMixin, "SetItemButtonQuality", SafeQuality) end
     if ItemButtonMixin.SetItemButtonTexture then hooksecurefunc(ItemButtonMixin, "SetItemButtonTexture", SafeTexture) end
@@ -298,14 +298,14 @@ for _, e in ipairs({ "PLAYER_LOGIN", "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUES
 end
 local pending
 ev:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGIN" then pcall(SyncCategory) end
+    if event == "PLAYER_LOGIN" then JQ.Try("Quests bag category", SyncCategory) end
     if pending then return end
     pending = true
     C_Timer.After(0.3, function()
         pending = nil
         Rebuild()
         RepaintAll()
-        pcall(RefreshCategory)
+        JQ.Try("Quests bag category", RefreshCategory)
     end)
 end)
 

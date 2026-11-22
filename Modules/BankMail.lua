@@ -229,7 +229,7 @@ local function StartSend(alt)
     end
     local queue = StacksFor(alt)
     if #queue == 0 then Status("Nothing in your bags for " .. Alts.Display(alt)) return end
-    if not Alts.HasFullName(alt) then pcall(Alts.LearnNames) end
+    if not Alts.HasFullName(alt) then JQ.Try("send mats: learning names", Alts.LearnNames) end
     if not Alts.HasFullName(alt) then
         Status("Can't send yet: mail needs " .. alt .. "'s full name. Log in on " .. alt .. " once so JaseTools learns their last name.")
         return

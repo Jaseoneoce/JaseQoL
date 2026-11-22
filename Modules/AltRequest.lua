@@ -332,7 +332,7 @@ local function StartSend(recipient)
     if job then return end
     if not mailOpen then Status("Open a mailbox first.") return end
     if InCombatLockdown() then return end
-    if not Alts.HasFullName(recipient) then pcall(Alts.LearnNames) end
+    if not Alts.HasFullName(recipient) then JQ.Try("requests: learning names", Alts.LearnNames) end
     if not Alts.HasFullName(recipient) then
         Status("Mail needs " .. recipient .. "'s full name. Log in on " .. recipient .. " once so JaseTools learns it.")
         return
@@ -1041,10 +1041,10 @@ local function CrateTooltip(tt, data)
 end
 
 if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then
-    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tt, data) pcall(CrateTooltip, tt, data) end)
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tt, data) JQ.Try("crate tooltip", CrateTooltip, tt, data) end)
 else
     for _, tt in ipairs({ GameTooltip, ItemRefTooltip }) do
-        if tt then pcall(tt.HookScript, tt, "OnTooltipSetItem", function(self) pcall(CrateTooltip, self) end) end
+        if tt then pcall(tt.HookScript, tt, "OnTooltipSetItem", function(self) JQ.Try("crate tooltip", CrateTooltip, self) end) end
     end
 end
 
@@ -1716,15 +1716,15 @@ local function HasJobs() return #MyJobs() > 0 end
 ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
     if event == "MERCHANT_SHOW" or event == "MERCHANT_UPDATE" then
-        pcall(LearnVendor)
+        JQ.Try("requests: learning vendor items", LearnVendor)
         for recipient in pairs(RealmRequests()) do Tidy(recipient) end
         return
     elseif event == "TRADE_SKILL_LIST_UPDATE" then
-        C_Timer.After(0.3, function() pcall(ScanRecipes) end)
+        C_Timer.After(0.3, function() JQ.Try("requests: reading recipes", ScanRecipes) end)
         return
     end
     if event == "TRADE_SKILL_SHOW" then
-        C_Timer.After(0.5, function() pcall(ScanRecipes) end)
+        C_Timer.After(0.5, function() JQ.Try("requests: reading recipes", ScanRecipes) end)
         C_Timer.After(0, function()
             local f = (ProfessionsFrame and ProfessionsFrame:IsShown() and ProfessionsFrame) or TradeSkillFrame
             ShowSide(f)

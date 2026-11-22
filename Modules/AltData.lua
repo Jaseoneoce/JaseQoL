@@ -463,7 +463,7 @@ function Alts.IsBankOpen() return bankOpen end
 local listeners = {}
 function Alts.OnChange(fn) listeners[#listeners + 1] = fn end
 function Alts.Changed()
-    for _, fn in ipairs(listeners) do pcall(fn) end
+    for _, fn in ipairs(listeners) do JQ.Try("alt data: window refresh", fn) end
 end
 
 -- Called by Send mats after a mail goes out: the alt has it "in the mail".
@@ -500,8 +500,8 @@ ev:SetScript("OnEvent", function(_, event, ...)
     if not EnsureName() then return end
     -- (also when Alt tracking is switched on after login)
     if event == "PLAYER_LOGIN" or (not loggedIn and IsLoggedIn and IsLoggedIn()) then
-        pcall(Alts.LearnNames)
-        pcall(Alts.MigrateNames)
+        JQ.Try("alt data: learning names", Alts.LearnNames)
+        JQ.Try("alt data: moving old records", Alts.MigrateNames)
         loggedIn = true
         Identity(); ScanProfessions(); ScanBags(); RecordLocation()
         if event == "PLAYER_LOGIN" then return end

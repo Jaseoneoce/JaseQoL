@@ -267,10 +267,10 @@ pcall(ev.RegisterUnitEvent, ev, "UNIT_AURA", "player")
 ev:SetScript("OnEvent", function(_, event, a1)
     if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
         Snapshot()
-        pcall(RememberXPBuffs)
+        JQ.Try("XP chat: reading buffs", RememberXPBuffs)
     elseif event == "UNIT_AURA" or event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
         -- keep the last readable list of XP buffs for kills made in combat
-        pcall(RememberXPBuffs)
+        JQ.Try("XP chat: reading buffs", RememberXPBuffs)
     elseif event == "PLAYER_XP_UPDATE" then
         if a1 == nil or a1 == "player" then OnXP() end
     elseif event == "QUEST_TURNED_IN" then

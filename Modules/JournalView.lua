@@ -543,7 +543,7 @@ local function ShowOnMap(loc, text, questID, title, turnIn)
     FDJ.pendingMarkerQuestTitle = title
     FDJ.pendingMarkerQuestID = questID
     FDJ.pendingMarkerTurnIn = turnIn or nil
-    pcall(FDJ.MapMarkers.ShowRecordedLocationOnMap, loc, text)
+    JQ.Try("journal: show on map", FDJ.MapMarkers.ShowRecordedLocationOnMap, loc, text)
 end
 
 -- Lower-case search index per dungeon (names of dungeon, bosses, items, quests).
@@ -1251,7 +1251,7 @@ local function MakeLine(row)
     f.map:SetScript("OnClick", function(self)
         local l = self:GetParent().line
         if l and l.action then
-            pcall(l.action)
+            JQ.Try("journal: button", l.action)
             Refresh(nil, true)
         elseif l then
             ShowOnMap(l.map, l.title or l.text, l.qid, l.title, l.turnIn)
@@ -1802,7 +1802,7 @@ local function Build()
     win.trackBtn = FlatButton(main, "Track", 70, 22)
     win.trackBtn:SetPoint("RIGHT", win.mapBtn, "LEFT", -6, 0)
     win.trackBtn:SetScript("OnClick", function()
-        if FDJ.ToggleQuestTracking then pcall(FDJ.ToggleQuestTracking, state.dungeon) end
+        if FDJ.ToggleQuestTracking then JQ.Try("journal: track quests", FDJ.ToggleQuestTracking, state.dungeon) end
         UpdateHeader()
     end)
     win.trackBtn:SetScript("OnEnter", function(self)
@@ -1815,7 +1815,7 @@ local function Build()
     end)
     win.trackBtn:SetScript("OnLeave", HideTip)
     win.mapBtn:SetScript("OnClick", function()
-        if FDJ.OpenDungeonMap then pcall(FDJ.OpenDungeonMap, state.dungeon) end
+        if FDJ.OpenDungeonMap then JQ.Try("journal: dungeon map", FDJ.OpenDungeonMap, state.dungeon) end
     end)
 
     -- Tabs

@@ -15,6 +15,7 @@
 
 Core.lua
 Modules\UI.lua
+Modules\ErrorLog.lua
 Modules\Hub.lua
 Modules\XPLevelColor.lua
 Modules\XPChat.lua
