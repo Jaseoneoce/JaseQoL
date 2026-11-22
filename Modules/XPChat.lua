@@ -5,7 +5,8 @@
 --  chat. This prints a chat line for every XP gain, read from the XP bar
 --  itself (so nothing is missed): the XP, where it came from when it can tell
 --  (the mob you just killed, the quest you just handed in), and how much of it
---  was normal, rested bonus (blue) and XP buffs (green).
+--  was normal, rested bonus (blue) and XP buffs (green), and in red what a
+--  missing buff cost you (Well Fed: kills only; Well-Rested: kills and quests).
 --    "JaseTools: XP +588 (Tar Lurker, 285 normal + 285 rested + 18 Well-Rested)"
 -------------------------------------------------------------------------------
 local _, JQ = ...
@@ -19,8 +20,14 @@ JQ.AddModule({
 })
 
 local lastXP, lastMax, lastLevel, restedBefore
-local source, sourceTime            -- the latest kill / quest, and when
+local source, sourceTime, sourceKind  -- the latest kill / quest, when, and "kill" / "quest"
 local targetName
+
+-- The XP buffs you can have, for the "missed" note:
+--   food (Well Fed) 5%, kills only; Well-Rested (sleeping bag) 1% a stack up
+--   to 3%, kills and quests.
+local FOOD_PCT, WELLRESTED_MAX = 5, 3
+local function IsWellRested(name) return type(name) == "string" and name:find("Rested") ~= nil end
 
 local function Num(n)
     local s = tostring(math.floor(n + 0.5))
@@ -33,8 +40,8 @@ local function Snapshot()
     restedBefore = GetXPExhaustion and GetXPExhaustion() or 0
 end
 
-local function SetSource(text)
-    source, sourceTime = text, GetTime()
+local function SetSource(text, kind)
+    source, sourceTime, sourceKind = text, GetTime(), kind
 end
 
 -------------------------------------------------------------------------------
@@ -87,9 +94,15 @@ local function XPBuffs()
 end
 JQ._XPBuffs = XPBuffs
 
--- gained, rested pool drop -> base, rested bonus, { {name, pct, xp}, ... }
-local function Split(gained, restedUsed)
-    local buffs = XPBuffs()
+-- gained, rested pool drop, "kill"/"quest"/nil -> base, rested bonus,
+-- { {name, pct, xp}, ... } of the buffs that applied, all XP buffs you had
+local function Split(gained, restedUsed, kind)
+    local all = XPBuffs()
+    local buffs = {}
+    for _, b in ipairs(all) do
+        -- food buffs count for kills only
+        if kind ~= "quest" or IsWellRested(b.name) then buffs[#buffs + 1] = b end
+    end
     local pct = 0
     for _, b in ipairs(buffs) do pct = pct + b.pct end
     -- Seen in game: a 285 XP kill gives 570 rested (285 + 285) and 588 with
@@ -117,7 +130,30 @@ local function Split(gained, restedUsed)
     local kept = {}
     for _, b in ipairs(buffs) do if b.xp > 0 then kept[#kept + 1] = b end end
     if #buffs == 0 then n = gained - r end
-    return n, r, kept
+    return n, r, kept, all
+end
+
+-- XP left on the table: Well-Rested below 3 stacks (kills and quests), no food
+-- buff (kills). It would have multiplied the normal + rested part.
+local function Missed(kind, base, restedBonus, all)
+    if kind ~= "kill" and kind ~= "quest" then return nil end
+    local wr, food = 0, false
+    for _, b in ipairs(all) do
+        if IsWellRested(b.name) then wr = math.max(wr, b.pct) else food = true end
+    end
+    local out = {}
+    local plain = base + restedBonus
+    if wr < WELLRESTED_MAX then
+        local missing = WELLRESTED_MAX - wr
+        out[#out + 1] = { xp = math.floor(plain * missing / 100 + 0.5),
+            what = wr > 0 and ("Well-Rested " .. wr .. "/" .. WELLRESTED_MAX) or "no Well-Rested" }
+    end
+    if kind == "kill" and not food then
+        out[#out + 1] = { xp = math.floor(plain * FOOD_PCT / 100 + 0.5), what = "no Well Fed" }
+    end
+    local kept = {}
+    for _, m in ipairs(out) do if m.xp > 0 then kept[#kept + 1] = m end end
+    return #kept > 0 and kept or nil
 end
 
 local function OnXP()
@@ -133,11 +169,14 @@ local function OnXP()
     local rested = GetXPExhaustion and GetXPExhaustion() or 0
     local restedUsed = math.max(0, (restedBefore or 0) - rested)
     Snapshot()
-    local from = (source and sourceTime and GetTime() - sourceTime < 3) and source or nil
+    if gained <= 0 then return end
+    local fresh = source and sourceTime and GetTime() - sourceTime < 3
+    local from = fresh and source or nil
+    local kind = fresh and sourceKind or nil
     source = nil
-    if gained <= 0 or not JQ.IsEnabled(KEY) then return end
+    if not JQ.IsEnabled(KEY) then return end
 
-    local base, restedBonus, buffs = Split(gained, restedUsed)
+    local base, restedBonus, buffs, all = Split(gained, restedUsed, kind)
     local parts = {}
     if from then parts[#parts + 1] = from end
     if restedBonus > 0 or #buffs > 0 then
@@ -150,6 +189,15 @@ local function OnXP()
     end
     local line = "|cffb07bffXP +" .. Num(gained) .. "|r"
     if #parts > 0 then line = line .. " (" .. table.concat(parts, ", ") .. ")" end
+    local missed = Missed(kind, base, restedBonus, all)
+    if missed then
+        local total, why = 0, {}
+        for _, m in ipairs(missed) do
+            total = total + m.xp
+            why[#why + 1] = m.what .. ": " .. Num(m.xp)
+        end
+        line = line .. " |cffff5050missed " .. Num(total) .. " (" .. table.concat(why, ", ") .. ")|r"
+    end
     JQ.Print(line)
 end
 
@@ -167,16 +215,16 @@ ev:SetScript("OnEvent", function(_, event, a1)
     elseif event == "QUEST_TURNED_IN" then
         -- questID, xpReward
         local title = C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(a1)
-        SetSource(title and ("quest: " .. title) or "quest")
+        SetSource(title and ("quest: " .. title) or "quest", "quest")
     elseif event == "CHAT_MSG_COMBAT_XP_GAIN" then
         -- if the game does send its own line, take the mob's name from it
         local mob = type(a1) == "string" and a1:match("^(.-) dies, you gain")
-        if mob then SetSource(mob) end
+        if mob then SetSource(mob, "kill") end
     elseif event == "PLAYER_TARGET_CHANGED" then
         targetName = UnitExists("target") and UnitCanAttack("player", "target") and UnitName("target") or nil
     elseif event == "UNIT_HEALTH" then
         -- your target dying is the likeliest source of the next XP
-        if a1 == "target" and targetName and UnitIsDead("target") then SetSource(targetName) end
+        if a1 == "target" and targetName and UnitIsDead("target") then SetSource(targetName, "kill") end
     end
 end)
 
