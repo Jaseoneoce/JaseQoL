@@ -2,7 +2,7 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
-## Unreleased
+## v1.6.0 - 2026-11-22
 
 ### New
 - **Error log** - every JaseTools error is now recorded, even the ones it catches quietly so the game's own windows keep working: what went wrong, where, how often and when. `/jq errors` shows it in a window you can copy from (to send to Jase); `/jq errors clear` empties it. Errors from JaseTools that reach the game, and actions the game blocked because of JaseTools, are logged too - the game and BugSack still see everything. Chat says so the first time an error turns up in a session ("Tell me about JaseTools errors", in the new Troubleshooting group with the AH debug log).
