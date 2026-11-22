@@ -2,6 +2,11 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### Changed
+- **New Settings page** - groups down the left (Experience, Quests, Dungeon Journal, Alts, Selling & auction house, Professions, Skins, Buttons) with how many of their switches are on, the group's switches on the right with proper on/off switches, and a search box that finds any setting. Settings that need another one sit indented under it and grey out while it's off (e.g. XP breakdown and the missed-XP reminders under Experience in chat).
+
 ## v1.5.1 - 2026-11-22
 
 ### New
