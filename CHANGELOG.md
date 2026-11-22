@@ -2,7 +2,7 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
-## Unreleased
+## v1.5.1 - 2026-11-22
 
 ### New
 - **XP chat switches** - "XP breakdown" off shows just the XP and the mob or quest ("XP +351 (Tar Lurker)"); "Missed XP: Well-Rested" and "Missed XP: Well Fed" turn each red missed-XP reminder off on its own.
