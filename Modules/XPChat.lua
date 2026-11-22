@@ -5,8 +5,8 @@
 --  chat. This prints a chat line for every XP gain, read from the XP bar
 --  itself (so nothing is missed): the XP, where it came from when it can tell
 --  (the mob you just killed, the quest you just handed in), and how much of it
---  was normal and how much rested bonus (in blue).
---    "JaseTools: XP +638 (Tar Lurker, 319 normal + 319 rested)"
+--  was normal, rested bonus (blue) and XP buffs (green).
+--    "JaseTools: XP +624 (Tar Lurker, 300 normal + 300 rested + 9 Well-Rested + 15 Well Fed)"
 -------------------------------------------------------------------------------
 local _, JQ = ...
 local KEY = "xpChat"
@@ -14,7 +14,7 @@ local KEY = "xpChat"
 JQ.AddModule({
     key = KEY,
     label = "Experience in chat",
-    description = "Prints a chat line for every bit of experience you gain: how much, from which mob or quest, and how much was normal and how much rested bonus (in blue). WoW Forever otherwise only shows kill XP as floating text.",
+    description = "Prints a chat line for every bit of experience you gain: how much, from which mob or quest, and how much was normal, rested bonus (blue) and XP buffs like Well Fed or Well-Rested (green, worked out from their percentages). WoW Forever otherwise only shows kill XP as floating text.",
     default = true,
 })
 
@@ -37,6 +37,88 @@ local function SetSource(text)
     source, sourceTime = text, GetTime()
 end
 
+-------------------------------------------------------------------------------
+--  XP buffs: any buff whose tooltip says "Experience gains increased by N%"
+--  (the 5% food buff, Well-Rested from the sleeping bag at 1% a stack...).
+--  The game only reports the total XP, so their share is worked out from the
+--  percentages: base x (1 + buffs) for a normal kill, and rested doubles the
+--  base (assumed: the buffs add to the base, not to the rested bonus).
+-------------------------------------------------------------------------------
+local function TooltipLines(aura, index)
+    local data
+    if C_TooltipInfo then
+        if aura.auraInstanceID and C_TooltipInfo.GetUnitBuffByAuraInstanceID then
+            local ok, d = pcall(C_TooltipInfo.GetUnitBuffByAuraInstanceID, "player", aura.auraInstanceID)
+            if ok then data = d end
+        end
+        if not data and C_TooltipInfo.GetUnitBuff then
+            local ok, d = pcall(C_TooltipInfo.GetUnitBuff, "player", index)
+            if ok then data = d end
+        end
+    end
+    local out = {}
+    for _, l in ipairs(data and data.lines or {}) do
+        if type(l.leftText) == "string" then out[#out + 1] = l.leftText end
+    end
+    return out
+end
+
+local function XPBuffs()
+    local list = {}
+    local get = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if not get then return list end
+    for i = 1, 40 do
+        local ok, aura = pcall(get, "player", i, "HELPFUL")
+        if not ok or not aura then break end
+        local name = aura.name
+        if type(name) == "string" and not (issecretvalue and issecretvalue(name)) then
+            for _, text in ipairs(TooltipLines(aura, i)) do
+                local pct = not (issecretvalue and issecretvalue(text))
+                    and (text:match("[Ee]xperience gain[s]? increased by (%d+)%%")
+                      or text:match("[Ee]xperience[^%d]-increased by (%d+)%%")
+                      or text:match("(%d+)%% more experience"))
+                if pct then
+                    list[#list + 1] = { name = name, pct = tonumber(pct) }
+                    break
+                end
+            end
+        end
+    end
+    return list
+end
+JQ._XPBuffs = XPBuffs
+
+-- gained, rested pool drop -> base, rested bonus, { {name, pct, xp}, ... }
+local function Split(gained, restedUsed)
+    local buffs = XPBuffs()
+    local pct = 0
+    for _, b in ipairs(buffs) do pct = pct + b.pct end
+    local base, restedBonus
+    if restedUsed > 0 then
+        -- the rested pool goes down by base x 2 (seen in game: +638 with no
+        -- buffs took 638 off the pool), so half of what it lost is the bonus
+        restedBonus = math.min(restedUsed, gained) / 2
+        base = restedBonus
+        if pct > 0 and gained - 2 * base < 0.5 then
+            -- the pool took the buff part too: split by the percentages instead
+            base = gained / (2 + pct / 100)
+            restedBonus = base
+        end
+    else
+        restedBonus = 0
+        base = gained / (1 + pct / 100)
+    end
+    local extra = math.max(0, gained - base - restedBonus)
+    for _, b in ipairs(buffs) do b.xp = pct > 0 and extra * b.pct / pct or 0 end
+    -- whole numbers that still add up to the gain
+    local r = math.floor(restedBonus + 0.5)
+    local used = r
+    for _, b in ipairs(buffs) do b.xp = math.floor(b.xp + 0.5); used = used + b.xp end
+    local kept = {}
+    for _, b in ipairs(buffs) do if b.xp > 0 then kept[#kept + 1] = b end end
+    return gained - used, r, kept
+end
+
 local function OnXP()
     if not lastXP then Snapshot() return end
     local xp, level = UnitXP("player"), UnitLevel("player")
@@ -54,13 +136,16 @@ local function OnXP()
     source = nil
     if gained <= 0 or not JQ.IsEnabled(KEY) then return end
 
-    -- Rested doubles kill XP, and the rested pool goes down by the whole gain
-    -- (seen in game: +638 took 638 off the pool), so the bonus is half of it.
-    local bonus = math.floor(math.min(restedUsed, gained) / 2 + 0.5)
+    local base, restedBonus, buffs = Split(gained, restedUsed)
     local parts = {}
     if from then parts[#parts + 1] = from end
-    if bonus > 0 then
-        parts[#parts + 1] = Num(gained - bonus) .. " normal + |cff4fa8ff" .. Num(bonus) .. " rested|r"
+    if restedBonus > 0 or #buffs > 0 then
+        local split = { Num(base) .. " normal" }
+        if restedBonus > 0 then split[#split + 1] = "|cff4fa8ff" .. Num(restedBonus) .. " rested|r" end
+        for _, b in ipairs(buffs) do
+            split[#split + 1] = "|cff59d959" .. Num(b.xp) .. " " .. b.name .. "|r"
+        end
+        parts[#parts + 1] = table.concat(split, " + ")
     end
     local line = "|cffb07bffXP +" .. Num(gained) .. "|r"
     if #parts > 0 then line = line .. " (" .. table.concat(parts, ", ") .. ")" end

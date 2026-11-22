@@ -7,7 +7,7 @@ JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Co
 ### New
 - **Cheapest way to finish a crate** - when your characters can't fill a waylaid crate, JaseTools prices the shortfall of every bundle off your last auction house scan (Mastercraft's, which knows how many are listed at each price, or Auctionator's, whichever is newer) and names the cheapest: e.g. "buy 12 Mithril Ore for 72s and make 12 Mithril Bar - plus 8 in your bank". It counts smelting when you can, and the crate tooltip says it too. With Auctionator, **Search AH** looks the items up for you.
 - **Auctionator shopping list** - the Requests tab ends with "Buy on the auction house": everything the plan says to buy (each crate's cheapest shortfall, request items none of your alts have), with a **Shopping list** button that makes it an Auctionator shopping list called "JaseTools" (exact names and amounts; replaced each time). At the auction house Auctionator searches it straight away.
-- **Experience in chat** - every XP gain gets a chat line (WoW Forever only shows kill XP floating over the mob): the mob or quest it came from, and the normal and rested (blue) parts, e.g. "XP +638 (Tar Lurker, 319 normal + 319 rested)".
+- **Experience in chat** - every XP gain gets a chat line (WoW Forever only shows kill XP floating over the mob): the mob or quest it came from, and the gain split into normal, rested (blue) and each XP buff (green: the 5% food buff, Well-Rested from the sleeping bag...), e.g. "XP +624 (Tar Lurker, 300 normal + 300 rested + 9 Well-Rested + 15 Well Fed)". The game only reports the total, so the buff shares are worked out from the buffs' percentages.
 
 ## v1.4.0 - 2026-11-22
 
