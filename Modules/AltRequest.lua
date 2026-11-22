@@ -528,7 +528,7 @@ local function Coverage(bundle, idx, used)
     -- What can make this item (smelting ore into bars, or a learned recipe), and
     -- whether I can: then my own reagents come before anyone else's bars.
     local rec, canMake, makers = MakeRecipe(id, me)
-    r.makers = makers
+    r.makers, r.rec, r.canMake = makers, rec, canMake
     local myReagents = {}
     if rec then
         for rid in pairs(rec.r) do
@@ -634,12 +634,106 @@ local function Better(c, best)
     return (c.fromBank or 0) < (best.fromBank or 0)
 end
 
+-------------------------------------------------------------------------------
+--  Auction house prices, read from the last scan of Mastercraft (its saved
+--  prices: listed price tiers, so it knows what buying 12 really costs) or
+--  Auctionator (its public API: the lowest price only), whichever is newer.
+-------------------------------------------------------------------------------
+local function MastercraftEntry(id)
+    local mdb = _G.MastercraftDB
+    if type(mdb) ~= "table" or type(mdb.prices) ~= "table" then return nil end
+    local faction = (UnitFactionGroup and UnitFactionGroup("player")) or ""
+    local best
+    for key, book in pairs(mdb.prices) do
+        if type(key) == "string" and key:sub(-(#faction + 1)) == "-" .. faction
+            and type(book) == "table" and type(book.items) == "table" then
+            local e = book.items[id]
+            if type(e) == "table" and type(e.p) == "number" and (not best or (e.t or 0) > (best.t or 0)) then best = e end
+        end
+    end
+    return best
+end
+
+local function AuctionatorPrice(id)
+    local api = Auctionator and Auctionator.API and Auctionator.API.v1
+    if not (api and api.GetAuctionPriceByItemID) then return nil end
+    local ok, price = pcall(api.GetAuctionPriceByItemID, "JaseTools", id)
+    if not (ok and type(price) == "number" and price > 0) then return nil end
+    local age
+    if api.GetAuctionAgeByItemID then
+        local ok2, days = pcall(api.GetAuctionAgeByItemID, "JaseTools", id)
+        if ok2 and type(days) == "number" then age = days end
+    end
+    return price, age
+end
+
+-- What buying qty of id costs now: cost, enough (false: fewer listed), source, age in days.
+-- nil when no scan has a price for it.
+local function CostToBuy(id, qty)
+    local e = MastercraftEntry(id)
+    local aPrice, aAge = AuctionatorPrice(id)
+    local mAge = e and math.floor((time() - (e.t or 0)) / 86400)
+    if e and not (aPrice and aAge and aAge < mAge) then
+        if e.gone then return nil end
+        if type(e.tiers) == "table" and #e.tiers > 0 then
+            local left, cost = qty, 0
+            for _, tier in ipairs(e.tiers) do
+                local take = math.min(left, tier[2] or 0)
+                cost = cost + take * (tier[1] or 0)
+                left = left - take
+                if left <= 0 then break end
+            end
+            if left > 0 then cost = cost + left * (e.tiers[#e.tiers][1] or e.p) end
+            return cost, left <= 0, "Mastercraft", mAge
+        end
+        return e.p * qty, not (e.n and qty > e.n), "Mastercraft", mAge
+    end
+    if aPrice then return aPrice * qty, true, "Auctionator", aAge end
+    return nil
+end
+JQ.CostToBuy = CostToBuy
+
+-- The cheapest way to buy what a bundle is short: the item itself, or (when
+-- you can make it) its reagents. { cost, id, qty, make, source, age, enough }
+local function BuyPlan(c)
+    if not c.id or c.short <= 0 then return nil end
+    local plan
+    local cost, enough, source, age = CostToBuy(c.id, c.short)
+    if cost then plan = { cost = cost, id = c.id, qty = c.short, source = source, age = age, enough = enough } end
+    local rec = c.rec
+    if rec and c.canMake then
+        local crafts = math.ceil(c.short / rec.n)
+        local total, parts, ok = 0, {}, true
+        for rid, q in pairs(rec.r) do
+            if not ((rec.vendor and rec.vendor[rid]) or IsVendor(rid)) then
+                local rc, renough, rsource, rage = CostToBuy(rid, crafts * q)
+                if not rc then ok = false; break end
+                total = total + rc
+                parts[#parts + 1] = { id = rid, qty = crafts * q, source = rsource, age = rage, enough = renough }
+            end
+        end
+        if ok and #parts > 0 and (not plan or total < plan.cost) then
+            plan = { cost = total, make = true, crafts = crafts, parts = parts, id = c.id, qty = c.short, vendor = rec.vendor, r = rec.r }
+        end
+    end
+    return plan
+end
+
 local function BestBundle(crate, idx, used)
     local best, all = nil, {}
     for _, b in ipairs(crate.bundles) do
         local c = Coverage(b, idx, used)
         all[#all + 1] = c
         if Better(c, best) then best = c end
+    end
+    -- nothing can be filled from your characters: the cheapest to finish off the auction house
+    if best and best.short > 0 then
+        local cheapest
+        for _, c in ipairs(all) do
+            c.buy = BuyPlan(c)
+            if c.buy and (not cheapest or c.buy.cost < cheapest.buy.cost) then cheapest = c end
+        end
+        if cheapest then best = cheapest end
     end
     return best, all
 end
@@ -661,7 +755,8 @@ end
 
 -- Take a picked bundle out of what's left, so the next crate doesn't count it.
 local function Claim(used, best)
-    if not best or best.short > 0 then return end
+    -- a crate finished off the auction house still uses what your characters have
+    if not best or (best.short > 0 and not best.buy) then return end
     used.bags[best.id] = (used.bags[best.id] or 0) + best.mine
     local fromAlts = 0
     for _, a in ipairs(best.alts) do fromAlts = fromAlts + a.n end
@@ -676,8 +771,57 @@ local function ItemName(id) return (UI.ItemNameQuality(id)) end
 
 -- One line about the pick, shared by the Requests tab and the crate tooltip.
 -- Returns text, and the request it needs ({[id] = n}, or nil when you can fill it yourself).
+local function Money(c)
+    if GetMoneyString then
+        local ok, s = pcall(GetMoneyString, c, true)
+        if ok and s then return s end
+    end
+    local g, s, cc = math.floor(c / 10000), math.floor(c / 100) % 100, c % 100
+    return (g > 0 and (g .. "g ") or "") .. ((g > 0 or s > 0) and (s .. "s ") or "") .. cc .. "c"
+end
+
+local function FromScan(source, age)
+    return source .. (age and (age == 0 and ", today" or (", " .. age .. "d old")) or "")
+end
+
 local function Describe(best)
     if not best then return "|cffff7070can't fill yet|r" end
+    if best.short > 0 and best.buy then
+        local b = best.buy
+        local what
+        if b.make then
+            local list = {}
+            for _, p in ipairs(b.parts) do
+                list[#list + 1] = p.qty .. " " .. ItemName(p.id) .. (p.enough == false and " (fewer listed)" or "")
+            end
+            what = ("buy %s for |cffffffff%s|r and make %d %s"):format(table.concat(list, " + "), Money(b.cost), b.qty, best.name)
+            local vend = {}
+            for rid, q in pairs(b.r or {}) do
+                if (b.vendor and b.vendor[rid]) or IsVendor(rid) then vend[#vend + 1] = (b.crafts * q) .. " " .. ItemName(rid) end
+            end
+            if #vend > 0 then what = what .. " (+ " .. table.concat(vend, ", ") .. " from a vendor)" end
+            what = what .. " |cff9e9ea8(" .. FromScan(b.parts[1].source, b.parts[1].age) .. ")|r"
+        else
+            what = ("buy %d %s for |cffffffff%s|r%s |cff9e9ea8(%s)|r"):format(b.qty, best.name, Money(b.cost),
+                b.enough == false and " - fewer are listed" or "", FromScan(b.source, b.age))
+        end
+        local have = best.n - best.short
+        local wants
+        local parts = {}
+        local inBags = best.mine - (best.fromMail or 0) - (best.fromBank or 0)
+        if inBags > 0 then parts[#parts + 1] = inBags .. " in your bags" end
+        if (best.fromMail or 0) > 0 then parts[#parts + 1] = best.fromMail .. " in your mail" end
+        if (best.fromBank or 0) > 0 then parts[#parts + 1] = best.fromBank .. " in your bank" end
+        if best.make and best.make.bars > 0 then parts[#parts + 1] = "make " .. best.make.bars end
+        for _, a in ipairs(best.alts) do
+            parts[#parts + 1] = NameOf(a.alt) .. " " .. a.n
+            wants = wants or {}
+            wants[best.id] = (wants[best.id] or 0) + a.n
+        end
+        local text = ("|cffffd25acheapest to finish|r %d %s: %s"):format(best.n, best.name, what)
+        if have > 0 then text = text .. " - plus " .. table.concat(parts, ", ") end
+        return text, wants
+    end
     if best.short > 0 then
         local text = ("|cffff7070can't fill yet|r - closest: %d %s (have %d, short %d)"):format(
             best.n, best.name, best.n - best.short, best.short)
@@ -770,13 +914,39 @@ local function CrateRows(add, me)
                   text = "|cffffd25a" .. e.label .. "|r  |cff8fb8ffrequested - see the plan below|r" })
         else
             local text, wants = Describe(e.best)
+            local button, enabled, action
+            if wants then
+                button, enabled, action = "Request", true, function() RequestCrate(me, e) end
+            elseif e.best and e.best.buy then
+                -- Auctionator can search the auction house for what to buy
+                local api = Auctionator and Auctionator.API and Auctionator.API.v1
+                if api and api.MultiSearchExact then
+                    local names = {}
+                    if e.best.buy.make then
+                        for _, p in ipairs(e.best.buy.parts) do names[#names + 1] = ItemName(p.id) end
+                    else
+                        names[1] = e.best.name
+                    end
+                    local ahOpen = (AuctionHouseFrame and AuctionHouseFrame:IsShown()) or (AuctionFrame and AuctionFrame:IsShown())
+                    button, enabled = "Search AH", ahOpen and true or false
+                    action = function()
+                        if not ((AuctionHouseFrame and AuctionHouseFrame:IsShown()) or (AuctionFrame and AuctionFrame:IsShown())) then
+                            Status("Open the auction house first.")
+                            return
+                        end
+                        pcall(api.MultiSearchExact, "JaseTools", names)
+                    end
+                end
+            end
             add({ icon = crate.id, itemID = crate.id, text = "|cffffd25a" .. e.label .. "|r  " .. text,
-                  button = wants and "Request" or nil, enabled = wants ~= nil,
-                  action = wants and function() RequestCrate(me, e) end or nil })
+                  button = button, enabled = enabled, action = action })
             for _, c in ipairs(e.all or {}) do
                 local total = c.mine + (c.make and c.make.bars or 0)
                 for _, a in ipairs(c.alts) do total = total + a.n end
                 local mark = c.short == 0 and "|cff59d959ok|r" or ("|cff9e9ea8" .. (c.id and ("have " .. total) or "none seen") .. "|r")
+                if c.short > 0 and c.buy then
+                    mark = mark .. ("|cff9e9ea8 - buying the rest: %s%s|r"):format(Money(c.buy.cost), c.buy.make and " (as reagents)" or "")
+                end
                 add({ text = ("%d %s  %s"):format(c.n, c.name, mark), indent = true, muted = c.short > 0 })
             end
         end

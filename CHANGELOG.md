@@ -2,6 +2,11 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## Unreleased
+
+### New
+- **Cheapest way to finish a crate** - when your characters can't fill a waylaid crate, JaseTools prices the shortfall of every bundle off your last auction house scan (Mastercraft's, which knows how many are listed at each price, or Auctionator's, whichever is newer) and names the cheapest: e.g. "buy 12 Mithril Ore for 72s and make 12 Mithril Bar - plus 8 in your bank". It counts smelting when you can, and the crate tooltip says it too. With Auctionator, **Search AH** looks the items up for you.
+
 ## v1.4.0 - 2026-11-22
 
 ### New
