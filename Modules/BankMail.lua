@@ -471,6 +471,8 @@ local setup
 
 local function BuildSetup()
     db.setupWin = db.setupWin or {}
+    -- the profession list grew a "who gets it" column: widen an older saved size
+    if db.setupWin.w and db.setupWin.w < 960 then db.setupWin.w = 960 end
     setup = UI.Window("JaseQoLMatsSetup", "Send mats: setup", 960, 560, db.setupWin)
     setup.cat = Alts.PROFESSIONS[1]
 
