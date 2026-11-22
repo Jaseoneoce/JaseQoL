@@ -2,7 +2,7 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
-## Unreleased
+## v1.5.2 - 2026-11-22
 
 ### Changed
 - **Send mats: who gets each profession, at a glance** - the profession list has a "Who gets it" column ("Po T.", "Po T. +1" or "nobody"); click it for a dropdown of your characters with a tick each (and their skill) to switch them. Replaces the bar at the bottom of the window.
