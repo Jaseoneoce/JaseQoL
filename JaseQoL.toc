@@ -17,6 +17,7 @@ Core.lua
 Modules\UI.lua
 Modules\Hub.lua
 Modules\XPLevelColor.lua
+Modules\XPChat.lua
 Modules\DungeonJournalSkin.lua
 Modules\JournalView.lua
 Modules\AltData.lua
