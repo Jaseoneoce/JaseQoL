@@ -5,7 +5,7 @@ JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Co
 ## Unreleased
 
 ### New
-- **Missed XP switches** - "Missed XP: Well-Rested" and "Missed XP: Well Fed" in Settings turn each red missed-XP reminder off on its own (both off: no missed note at all).
+- **XP chat switches** - "XP breakdown" off shows just the XP and the mob or quest ("XP +351 (Tar Lurker)"); "Missed XP: Well-Rested" and "Missed XP: Well Fed" turn each red missed-XP reminder off on its own.
 
 ### Fixed
 - XP in chat missed your XP buffs on kills (it said "no Well-Rested" with 2 stacks up): the game hides buff details while you're in combat, when kill XP arrives. JaseTools now remembers your XP buffs whenever it can read them and uses that in combat, dropping any that have run out.

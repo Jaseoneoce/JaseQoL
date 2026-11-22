@@ -16,7 +16,7 @@ local GROUPS = {
     { "Unit frames & nameplates", { "xpLevelColor" } },
     { "Skins", { "mcSkin", "gosSkin" } },
     { "Professions", { "profResize" } },
-    { "Other", { "xpChat", "xpMissedRested", "xpMissedFood", "boeGuard", "questItemGuard", "questBagCategory", "ahCopperWarn", "ahDebug", "escortGuard", "escortAnnounce", "hubButton", "minimapButton" } },
+    { "Other", { "xpChat", "xpBreakdown", "xpMissedRested", "xpMissedFood", "boeGuard", "questItemGuard", "questBagCategory", "ahCopperWarn", "ahDebug", "escortGuard", "escortAnnounce", "hubButton", "minimapButton" } },
 }
 local SLASH = {
     djOverhaul = "/jdj", altInventory = "/jinv", bankMail = "/jmats", ahDebug = "/jahlog",

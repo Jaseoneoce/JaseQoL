@@ -18,7 +18,13 @@ JQ.AddModule({
     description = "Prints a chat line for every bit of experience you gain: how much, from which mob or quest, and how much was normal, rested bonus (blue) and XP buffs like Well Fed or Well-Rested (green, worked out from their percentages). WoW Forever otherwise only shows kill XP as floating text.",
     default = true,
 })
-local MISS_FOOD, MISS_WR = "xpMissedFood", "xpMissedRested"
+local MISS_FOOD, MISS_WR, BREAKDOWN = "xpMissedFood", "xpMissedRested", "xpBreakdown"
+JQ.AddModule({
+    key = BREAKDOWN,
+    label = "XP breakdown",
+    description = "On the XP chat line, splits the XP into normal, rested (blue) and XP buffs (green). Off: just the XP and the mob or quest.",
+    default = true,
+})
 JQ.AddModule({
     key = MISS_WR,
     label = "Missed XP: Well-Rested",
@@ -226,7 +232,7 @@ local function OnXP()
     local base, restedBonus, buffs, all = Split(gained, restedUsed, kind)
     local parts = {}
     if from then parts[#parts + 1] = from end
-    if restedBonus > 0 or #buffs > 0 then
+    if (restedBonus > 0 or #buffs > 0) and JQ.IsEnabled(BREAKDOWN) then
         local split = { Num(base) .. " normal" }
         if restedBonus > 0 then split[#split + 1] = "|cff4fa8ff" .. Num(restedBonus) .. " rested|r" end
         for _, b in ipairs(buffs) do
