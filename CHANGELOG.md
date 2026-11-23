@@ -2,6 +2,11 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.8.1 - 2026-11-23
+
+### Fixed
+- **Settings: every group always shows** - the list down the left of the Settings tab always has all nine groups (Exploring included), even if a group's switches didn't load; such a group says to quit the game fully and start it again. In a short window the groups get shorter so none falls off the bottom.
+
 ## v1.8.0 - 2026-11-23
 
 ### New

@@ -64,12 +64,12 @@ local function GroupRows(g)
     return rows
 end
 
--- All groups, plus "More" for any switch not given a group yet.
+-- All groups, plus "More" for any switch not given a group yet. Every group is
+-- always listed: one whose switches didn't load says so instead of vanishing.
 local function AllGroups()
     local out = {}
     for _, g in ipairs(GROUPS) do
-        local rows = GroupRows(g)
-        if #rows > 0 then out[#out + 1] = { name = g[1], blurb = g[2], rows = rows } end
+        out[#out + 1] = { name = g[1], blurb = g[2], rows = GroupRows(g) }
     end
     local extra = {}
     for _, spec in ipairs(JQ.modules) do
@@ -191,9 +191,6 @@ local function Build()
         local b = win.groupButtons[i]
         if b then return b end
         b = CreateFrame("Button", nil, side)
-        b:SetHeight(GROUP_H)
-        b:SetPoint("TOPLEFT", 2, -2 - (i - 1) * GROUP_H)
-        b:SetPoint("TOPRIGHT", -2, -2 - (i - 1) * GROUP_H)
         b.bg = UI.Fill(b, 1, 1, 1, 0)
         UI.Fill(b, 1, 1, 1, 0.05, "HIGHLIGHT")
         b.bar = b:CreateTexture(nil, "ARTWORK")
@@ -219,6 +216,9 @@ local function Build()
         win.groupButtons[i] = b
         return b
     end
+    -- a short window squeezes the groups so none is ever cut off
+    win.side = side
+    side:SetScript("OnSizeChanged", function() if win.Refresh then win:Refresh() end end)
 
     -- right: the switches
     local main = UI.Panel(win)
@@ -267,8 +267,9 @@ local function Build()
         return row
     end, function(row, d)
         row.spec, row.parent = d.spec, d.parent
-        if d.header then
-            row.head:SetText(("|cff%s%s|r"):format(UI.AccentHex(), d.header:upper()))
+        if d.header or d.note then
+            row.head:SetText(d.note and ("|cffffd133" .. d.note .. "|r")
+                or ("|cff%s%s|r"):format(UI.AccentHex(), d.header:upper()))
             row.head:Show(); row.hl:Hide(); row.guide:Hide(); row.sep:Hide()
             row.switch:Hide(); row.tag:Hide(); row.label:Hide(); row.desc:Hide()
             return
@@ -321,8 +322,17 @@ local function Build()
         if current then db.group = current.name end
 
         -- sidebar
+        local sideH = self.side:GetHeight() or 0
+        local gh = GROUP_H
+        if sideH > 0 and #groups > 0 then
+            gh = math.max(16, math.min(GROUP_H, math.floor((sideH - 4) / #groups)))
+        end
         for i, g in ipairs(groups) do
             local b = GroupButton(i)
+            b:SetHeight(gh)
+            b:ClearAllPoints()
+            b:SetPoint("TOPLEFT", 2, -2 - (i - 1) * gh)
+            b:SetPoint("TOPRIGHT", -2, -2 - (i - 1) * gh)
             b.groupName, b.blurb = g.name, g.blurb
             b.name:SetText(g.name)
             local a, n = CountOn(g.rows)
@@ -355,6 +365,9 @@ local function Build()
             self.blurb:SetText(hits == 0 and "Nothing matches." or (hits .. " found"))
         elseif current then
             for _, r in ipairs(current.rows) do items[#items + 1] = r end
+            if #items == 0 then
+                items[1] = { note = "These didn't load. Quit the game fully and start it again." }
+            end
             self.heading:SetText(current.name)
             self.blurb:SetText(current.blurb or "")
         end
