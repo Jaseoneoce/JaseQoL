@@ -2,6 +2,11 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.8.0 - 2026-11-23
+
+### New
+- **Send mats: recipes go to the right alt** - every unbound recipe in your bags (patterns, plans, schematics, formulas and the like) is now sent to the alts with the profession it teaches, without adding each one in `/jmats`. On by default for Leatherworking, Tailoring, Engineering, Blacksmithing, Cooking, Alchemy, First Aid, Enchanting and Fishing; each has a **Recipes: on/off** button in `/jmats` beside the BoE gear one. It doesn't check whether the alt already knows the recipe.
+
 ## v1.7.0 - 2026-11-23
 
 ### New
