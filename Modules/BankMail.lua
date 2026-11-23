@@ -13,7 +13,8 @@
 --  12 attachments per mail, as many mails as needed.
 --
 --  JaseQoLDB.bankMail = { mats = {[itemID] = {[category]=true}},
---    receives = {[realm] = {[alt] = {[category]=true|false}}}, lastAlt }
+--    receives = {[realm] = {[alt] = {[category]=true|false}}}, lastAlt,
+--    boeGear = {[category]=bool}, recipes = {[category]=bool} }
 -------------------------------------------------------------------------------
 local _, JQ = ...
 local KEY = "bankMail"
@@ -120,6 +121,38 @@ local function GetsBoEGear(alt)
     return false
 end
 
+-- "Also send its recipes" per profession (on by default): unbound recipes
+-- (patterns, plans, schematics, formulas...) go to alts receiving the
+-- profession they teach. Keyed by the Recipe item class's subclass ID.
+local InstantFn = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+local RECIPE_CLASS = (Enum and Enum.ItemClass and Enum.ItemClass.Recipe) or 9
+local RECIPE_CAT = {
+    [1] = "Leatherworking", [2] = "Tailoring", [3] = "Engineering",
+    [4] = "Blacksmithing", [5] = "Cooking", [6] = "Alchemy",
+    [7] = "First Aid", [8] = "Enchanting", [9] = "Fishing",
+}
+local HAS_RECIPES = {}
+for _, c in pairs(RECIPE_CAT) do HAS_RECIPES[c] = true end
+
+local function RecipesOn(cat)
+    if not HAS_RECIPES[cat] then return false end
+    local v = db.recipes[cat]
+    if v == nil then return true end
+    return v
+end
+
+-- The profession an item teaches, or nil if it isn't a profession recipe.
+local function RecipeCategory(id)
+    if not id then return nil end
+    local _, _, _, _, _, classID, subClassID = InstantFn(id)
+    return classID == RECIPE_CLASS and RECIPE_CAT[subClassID] or nil
+end
+
+local function RecipeGoesTo(id, alt)
+    local cat = RecipeCategory(id)
+    return cat ~= nil and RecipesOn(cat) and Receives(alt, cat)
+end
+
 local function Assign(id, cat, on)
     if not id or not cat then return end
     db.mats[id] = db.mats[id] or {}
@@ -135,7 +168,7 @@ local function StacksFor(alt)
         local n = (C and C.GetContainerNumSlots and C.GetContainerNumSlots(bag)) or 0
         for slot = 1, n do
             local id, count, isBound, link = Alts.SlotInfo(bag, slot)
-            if id and not isBound and (ItemGoesTo(id, alt) or (boe and IsBoEGear(link))) then
+            if id and not isBound and (ItemGoesTo(id, alt) or RecipeGoesTo(id, alt) or (boe and IsBoEGear(link))) then
                 out[#out + 1] = { bag = bag, slot = slot, id = id, count = count or 1 }
             end
         end
@@ -621,8 +654,23 @@ local function BuildSetup()
     mid:SetWidth(270)
     setup.midHead = UI.Text(mid, 12)
     setup.midHead:SetPoint("TOPLEFT", 8, -8)
-    setup.boeBtn = UI.Button(mid, "Also send all BoE gear", 150, 20)
-    setup.boeBtn:SetPoint("TOPRIGHT", -6, -5)
+    -- two "also send" switches under the heading: BoE gear and recipes
+    setup.boeBtn = UI.Button(mid, "All BoE gear: off", 126, 20)
+    setup.boeBtn:SetPoint("TOPLEFT", 6, -28)
+    setup.recipeBtn = UI.Button(mid, "Recipes: on", 126, 20)
+    setup.recipeBtn:SetPoint("TOPRIGHT", -6, -28)
+    setup.recipeBtn:SetScript("OnClick", function()
+        if not HAS_RECIPES[setup.cat] then return end
+        db.recipes[setup.cat] = not RecipesOn(setup.cat)
+        setup:Refresh()
+    end)
+    setup.recipeBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Also send " .. setup.cat .. " recipes", 1, 1, 1)
+        GameTooltip:AddLine("Every unbound " .. setup.cat .. " recipe in your bags (patterns, plans, schematics, formulas and the like) goes to the alts who get " .. setup.cat .. ", without adding each one here. On by default.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    setup.recipeBtn:SetScript("OnLeave", UI.HideTip)
     setup.boeBtn:SetScript("OnClick", function()
         db.boeGear[setup.cat] = not BoEGearOn(setup.cat)
         setup:Refresh()
@@ -636,8 +684,8 @@ local function BuildSetup()
     setup.boeBtn:SetScript("OnLeave", UI.HideTip)
 
     local drop = CreateFrame("Button", nil, mid)
-    drop:SetPoint("TOPLEFT", 6, -28)
-    drop:SetPoint("TOPRIGHT", -6, -28)
+    drop:SetPoint("TOPLEFT", 6, -54)
+    drop:SetPoint("TOPRIGHT", -6, -54)
     drop:SetHeight(34)
     UI.Fill(drop, 1, 1, 1, 0.04)
     UI.Fill(drop, 1, 1, 1, 0.08, "HIGHLIGHT")
@@ -765,6 +813,9 @@ local function BuildSetup()
         self.midHead:SetText(cat .. "  |cff9e9ea8" .. #assigned .. " items|r")
         self.boeBtn:SetOn(BoEGearOn(cat))
         self.boeBtn.text:SetText(BoEGearOn(cat) and "All BoE gear: on" or "All BoE gear: off")
+        self.recipeBtn:SetShown(HAS_RECIPES[cat] or false)
+        self.recipeBtn:SetOn(RecipesOn(cat))
+        self.recipeBtn.text:SetText(RecipesOn(cat) and "Recipes: on" or "Recipes: off")
         self.assigned:SetItems(assigned, true)
 
         -- bag items grouped by type (unbound only)
@@ -835,6 +886,7 @@ JQ.byKey[KEY].onLoad = function(enabled)
     db.mats = db.mats or {}
     db.receives = db.receives or {}
     db.boeGear = db.boeGear or {}
+    db.recipes = db.recipes or {}
 
     SLASH_JASEQOLMATS1 = "/jmats"
     SlashCmdList.JASEQOLMATS = function()
