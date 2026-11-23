@@ -21,6 +21,8 @@ local GROUPS = {
     { "Quests", "Quest items and escorts", {
         "questItemGuard", "questBagCategory", { "escortGuard", { "escortAnnounce" } } } },
     { "Dungeon Journal", "The new journal view and its skin", { "djOverhaul", "djSkin" } },
+    { "Exploring", "Legacy Challenges and the map", {
+        { "exploreWaypoints", { "exploreShowZone", "exploreShowAll" } } } },
     { "Alts, bank & mail", "Alt inventory, Send mats, Requests and crates", {
         { "altTracker", { "altTooltip", "altInventory", "bankMail", "altRequest" } } } },
     { "Selling & auction house", "Sell warnings and auction house help", { "boeGuard", "ahCopperWarn" } },

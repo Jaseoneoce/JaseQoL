@@ -1,12 +1,12 @@
 ## Interface: 16001
 ## AllowLoadGameType: camelot
 ## Title: |cff0cd29fJaseTools|r
-## Notes: XP level colours and XP in chat, Dungeon Journal view, alt inventory/tooltips, mats and waylaid crates from alts, BoE/quest-item/AH warnings, escort guard, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
+## Notes: XP level colours and XP in chat, Dungeon Journal view, alt inventory/tooltips, mats and waylaid crates from alts, BoE/quest-item/AH warnings, escort guard, Explore challenge waypoints and map marks, Mastercraft and GuildOS skins. Each one can be switched on or off (/jq).
 ## Author: jasone
 ## X-AI-Assisted: Built with AI assistance (Claude Code, Anthropic); directed and tested by Jase
 ## X-Website: https://github.com/Jaseoneoce/JaseQoL
 ## Version: @project-version@
-## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQuestTracker, ForeverDungeonJournal
+## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQuestTracker, ForeverDungeonJournal, TomTom, OpenMap
 ## SavedVariables: JaseQoLDB
 ## IconTexture: Interface\AddOns\JaseQoL\Media\icon
 ## AddonCompartmentFunc: JaseQoL_OnAddonCompartmentClick
@@ -30,6 +30,8 @@ Modules\QuestItemGuard.lua
 Modules\AHCopperWarn.lua
 Modules\AHDebug.lua
 Modules\EscortGuard.lua
+Data\ExploreSpots.lua
+Modules\ExploreWaypoints.lua
 Modules\MastercraftSkin.lua
 Modules\GuildOSSkin.lua
 Modules\SettingsPage.lua

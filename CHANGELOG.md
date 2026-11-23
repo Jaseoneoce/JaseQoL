@@ -2,6 +2,13 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.7.0 - 2026-11-23
+
+### New
+- **Explore challenge waypoints** - in Legacy Challenges (Adventure > Eastern Kingdoms / Kalimdor), every place of an Explore challenge you haven't found yet shows its coordinates as a button where the tick would be. Click it for a TomTom waypoint and the world map opened on the zone, with the ground that explores the place outlined and filled in pink; shift-click for every place still missing in that challenge, ctrl-click for the waypoint only, right-click to clear. Places drop off as you explore them. Works without TomTom too (no arrow, the map shows where to go).
+- **Show this zone's places on the map** and **Show every zone's places on the map** - two switches (off by default, also in OpenMap's menu under JaseTools) that draw every place still to explore in pink on the world map, OpenMap's or the game's own: for the zone the map shows and the one you're in, or for all of Eastern Kingdoms and Kalimdor at once. `/jq exploreShowZone`, `/jq exploreShowAll`.
+- Where to stand for each place comes from OpenMap's exploration data (OpenMap contributors, MIT).
+
 ## v1.6.0 - 2026-11-22
 
 ### New
