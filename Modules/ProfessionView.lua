@@ -17,9 +17,9 @@
 --              (sub-crafts, each with its own Make), then the main craft -
 --              or Mastercraft's own mini guide panel, docked.
 --  "Classic view" opens the game's own window until you close it.
---  While your character moves the window fades to 20% so you can see where
---  you're going (like the world map); it's whole again when you stop, or
---  while the mouse is over it.
+--  While your character moves (running, jumping, falling - not on a flight
+--  path) the window fades to 20% so you can see where you're going, like the
+--  world map; it's whole again when you stop, or while the mouse is over it.
 --  WoW Forever's all-professions book (K, the micro-menu button) opens this
 --  window straight away on the profession you used last; its "All
 --  professions" button opens the book itself. Forever's book has no
@@ -1564,7 +1564,9 @@ local function Build()
         since = 0
         JQ.Try("professions window: mini guide", DockGuide)
         -- moving: 20%, so the window doesn't hide where you're going; whole when still or under the mouse
-        local moving = (GetUnitSpeed and (GetUnitSpeed("player") or 0) > 0) or (IsFalling and IsFalling()) or false
+        -- (on a flight path you're not steering: it stays whole)
+        local onTaxi = UnitOnTaxi and UnitOnTaxi("player")
+        local moving = not onTaxi and ((GetUnitSpeed and (GetUnitSpeed("player") or 0) > 0) or (IsFalling and IsFalling())) or false
         local want = (moving and not win:IsMouseOver()) and 0.2 or 1
         if math.abs((win:GetAlpha() or 1) - want) > 0.01 then win:SetAlpha(want) end
         -- walking up to (or away from) an anvil or forge changes what can be made here

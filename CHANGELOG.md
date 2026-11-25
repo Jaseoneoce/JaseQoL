@@ -2,6 +2,11 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.12.2 - 2026-11-26
+
+### Fixed
+- **Professions window faded on flight paths** - it now only fades while you're running, jumping or falling, and stays fully visible while you fly.
+
 ## v1.12.1 - 2026-11-26
 
 ### New
