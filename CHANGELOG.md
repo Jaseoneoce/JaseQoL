@@ -2,6 +2,17 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.12.0 - 2026-11-25
+
+### New
+- **Professions: one window** (off by default: `/jq profView`) - opening one of your own professions shows a single JaseTools window instead of the game's. Left: your recipes, grouped as the game groups them, coloured by skill-up chance, with how many you can make, search, and **Can make** / **Skill ups** filters. Middle: the recipe you picked, with its materials for any number of crafts (need / have / alts, and where each comes from), **Make**, **Make all** and **Plan mats**. Right: your request plan, docked there with all its buttons, and Mastercraft's mini guide under it (**Show / hide**). Buttons along the top switch to your other professions. **Classic view** opens the game's own window; other people's professions always use it. `/jprof` reopens the JaseTools window.
+- **Gold in the Professions window** - every recipe in the list shows what one craft costs in materials; hover it for what the result sells for and the profit or loss. For the picked recipe each material shows its cost: bought on the auction house, or made yourself from its own materials when that is cheaper (hover a material to compare the two). Under it: the total for the crafts you typed, what is still to buy after your own stock and your alts, and the profit or loss. Prices come from your last Mastercraft or Auctionator scan; vendor goods are not counted.
+- **Dungeon Journal view: what was missing** - quests now show their **Rewards** (items, "choose one", XP, money and reputation) for nearly every quest, the reputation a quest needs and where you stand, a **Leads to** line that opens the follow-up quest, what a follow-up offers later, which chain steps are done inside the dungeon, and tags for repeatable, profession-only and attunement quests. Quests that are not available (not in WoW Forever, not for your race) are greyed with the reason and no longer counted. Bosses show the journal's own labels (Paladin Mount Quest Boss, 0.5 Quest Event), optional and grouped bosses, the note under their name, their quest, and loot chests. Loot shows random enchantments, extremely rare drops, what two drops combine into, proper trash sources, the journal's item tips in the tooltip, pinned drops first and a section for probable drops.
+
+### Changed
+- **Click to make opens the profession** - the plan's make step now opens the profession that makes the item by itself (after that profession has been opened once), then a second click makes it.
+- **Dungeon Journal view: quest counts** - repeatable and unavailable quests are left out of "x of y quests".
+
 ## v1.11.0 - 2026-11-25
 
 ### New

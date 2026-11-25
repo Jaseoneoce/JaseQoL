@@ -376,13 +376,49 @@ local function ChainStatus(q)
 end
 
 -- "done" | "log" | "locked" | "available" | "low" | nil (not for this character)
+-- The journal's own words for one of its text keys (translated when it has
+-- them); the fallback, or the key itself, when it doesn't know the key.
+local function FL(key, fallback, ...)
+    if FDJ and type(FDJ.L) == "function" and type(key) == "string" then
+        local ok, text = pcall(FDJ.L, key, ...)
+        if ok and type(text) == "string" and text ~= "" and text ~= key then return text end
+    end
+    return fallback or key
+end
+
+-- One of the journal's own functions, when this version of it has it.
+local function Call(name, ...)
+    local fn = FDJ and FDJ[name]
+    if type(fn) ~= "function" then return nil end
+    local ok, value = pcall(fn, ...)
+    if ok then return value end
+end
+
+local function IsRepeatable(q) return q.repeatable or Call("IsRepeatableQuest", q) or false end
+
+-- Why a quest can't be done on this character, or nil: not in WoW Forever for
+-- now, not for this race, or lost (the journal's "read the warning" quests).
+local function Unavailable(q)
+    if Call("IsQuestRaceUnavailable", q) then
+        return ("Not available to %s characters"):format(UnitRace and UnitRace("player") or "your race")
+    end
+    if Call("IsQuestUnavailable", q) then return "Not available in WoW Forever for now" end
+    if Call("IsQuestLost", q) then return "No longer available: read the warning" end
+end
+
 local function QuestState(q)
     local faction = UnitFactionGroup("player")
     if q.faction and q.faction ~= "Both" and faction and q.faction ~= faction then
         return state and state.bothFactions and "faction" or nil
     end
+    if Unavailable(q) then
+        -- (the journal's own option to leave these out of the list)
+        if ForeverDungeonJournalDB and ForeverDungeonJournalDB.hideUnavailableQuests then return nil end
+        return "unavailable"
+    end
     if FDJ.QuestCountsForCharacter and not FDJ.QuestCountsForCharacter(q) then return nil end
-    if q.id and QuestDone(q.id) then return "done" end
+    -- a repeatable entry is always there: never "done"
+    if q.id and not IsRepeatable(q) and QuestDone(q.id) then return "done" end
     if q.id and QuestInLog(q.id) then return "log" end
     local nDone, _, _, _, _, locked = ChainStatus(q)
     if nDone and locked then return "locked" end
@@ -397,6 +433,7 @@ local STATE_LABEL = {
     faction = { "Other faction", 0.55, 0.55, 0.58 },
     available = { "Available", 0.90, 0.90, 0.90 },
     low = { "Too low", 0.55, 0.55, 0.58 },
+    unavailable = { "Not available", 0.55, 0.55, 0.58 },
 }
 
 -- Side-chain pages the journal adds (e.g. "Mallet of Zul'Farrak", which
@@ -417,18 +454,23 @@ local function SideChainsFor(dungeonName)
     return sideChains[dungeonName]
 end
 
+-- The quests to list, how many are done, and how many count (a quest that
+-- isn't available or is repeatable is listed but never counted).
 local function QuestsFor(d, dungeonName)
-    local out, done = {}, 0
+    local out, done, total = {}, 0, 0
     local function add(q, side)
         if q.hideFromMainList then return end   -- shown inside the quest that links it
         local st = QuestState(q)
         if st then
             out[#out + 1] = { q = q, state = st, side = side }
-            if st == "done" then done = done + 1 end
+            if st ~= "unavailable" and not IsRepeatable(q) then
+                total = total + 1
+                if st == "done" then done = done + 1 end
+            end
         end
     end
     for _, q in ipairs(d.quests or {}) do add(q) end
-    return out, done
+    return out, done, total
 end
 
 -------------------------------------------------------------------------------
@@ -584,6 +626,38 @@ local function ItemEnter(self)
     GameTooltip:SetItemByID(self.itemID)
     if self.source then
         GameTooltip:AddLine("Drops from: " .. self.source, 0.62, 0.62, 0.66)
+    end
+    -- a loot card carries the journal's item: its notes go under the tooltip
+    local it = self.item
+    if type(it) == "table" then
+        if type(it[6]) == "string" and it[6] ~= "" then
+            GameTooltip:AddLine(FL(it[6]), 0.35, 0.85, 0.35)   -- "<Random enchantment>"
+        end
+        if it.dropNote then GameTooltip:AddLine(FL(it.dropNote), 1, 0.6, 0.25) end   -- "Extremely rare drop"
+        local from = (it.sourceTip and (Call("LocalizeSourceTip", it.sourceTip) or it.sourceTip))
+            or (it.allTrash and FL("ALL_TRASH", "ALL Trash"))
+            or (type(it[5]) == "string" and it[5] ~= "" and it[5]) or nil
+        if from then GameTooltip:AddLine("From: " .. from, 0.62, 0.62, 0.66, true) end
+        if type(it.makes) == "table" then
+            local halves = {}
+            for _, h in ipairs(it.makes.from or {}) do
+                halves[#halves + 1] = (h[2] or "?") .. (h[3] and (" (" .. h[3] .. ")") or "")
+            end
+            GameTooltip:AddLine(("Makes %s%s"):format(it.makes[2] or "?",
+                #halves > 0 and (": combine " .. table.concat(halves, " and ")) or ""), 1, 0.82, 0.35, true)
+        end
+        for _, line in ipairs(type(it.tip) == "table" and it.tip or {}) do
+            if type(line) == "table" then
+                GameTooltip:AddDoubleLine(tostring(line[1] or ""), tostring(line[2] or ""), 0.9, 0.9, 0.9, 0.9, 0.9, 0.9)
+            elseif type(line) == "string" then
+                GameTooltip:AddLine(line, 0.9, 0.9, 0.9, true)
+            end
+        end
+        if self.removed then
+            GameTooltip:AddLine(FL("LOOT_NOTE_LOOT_REMOVED", "This boss's loot has been removed for now."), 1, 0.35, 0.3, true)
+        elseif self.probable then
+            GameTooltip:AddLine("Not confirmed, but a probable drop", 0.62, 0.62, 0.66, true)
+        end
     end
     GameTooltip:Show()
 end
@@ -790,8 +864,8 @@ local DungeonRow = {
         end
 
         -- Quest progress for this character.
-        local list, done = QuestsFor(data.d, data.name)
-        local total, inLog = #list, 0
+        local list, done, total = QuestsFor(data.d, data.name)
+        local inLog = 0
         for _, e in ipairs(list) do
             if e.state == "log" then inLog = inLog + 1 end
         end
@@ -871,10 +945,28 @@ local BossRow = {
         row.bossName = b.name
         row.icon:SetTexture(b.customIcon or (b.trash and TRASH_ICON) or BOSS_ICON)
         local tags = ""
-        if b.rare then tags = tags .. "  |cffc0a0ffRARE|r" end
+        if b.rare then
+            -- the journal's own label where it has one ("Paladin Mount Quest Boss", "0.5 Quest Event")
+            local label = b.rareLabel and (Call("RareLabelText", b.rareLabel) or b.rareLabel) or "RARE"
+            tags = tags .. "  |cffc0a0ff" .. tostring(label):upper() .. "|r"
+        end
+        if b.optional then tags = tags .. "  |cff9e9ea8OPTIONAL|r" end
+        if b.childOf then tags = tags .. "  |cff9e9ea8" .. tostring(b.childOf):upper() .. "|r" end
         if b.factionOnly then tags = tags .. "  |cffff7070" .. b.factionOnly:upper() .. " ONLY|r" end
         row.name:SetText((b.name or "?") .. tags)
-        row.sub:SetText(b.description or (b.trash and "Drops from trash in this dungeon" or ""))
+        local subs = {}
+        local desc = b.description or (b.lootChest and (b.chestLabel or "Tribute Chest"))
+            or (b.trash and "Drops from trash in this dungeon") or nil
+        if desc then subs[#subs + 1] = desc end
+        if b.lootNote then subs[#subs + 1] = "|cffff5a4a" .. FL(b.lootNote) .. "|r" end   -- "Can drop 2 items"
+        if type(b.questLink) == "table" and b.questLink.name then
+            subs[#subs + 1] = "|cffffd25aQuest: " .. b.questLink.name .. "|r"
+        end
+        if type(b.spawnQuest) == "table" and b.spawnQuest.quest then
+            local sq = QuestByID(b.spawnQuest.quest)
+            subs[#subs + 1] = "|cffffd25aSpawns at the end of " .. (sq and sq.name or "a quest") .. "|r"
+        end
+        row.sub:SetText(table.concat(subs, "  •  "))
         local n, own = 0, 0
         for _, it in ipairs(b.loot or {}) do
             n = n + 1
@@ -975,16 +1067,27 @@ local CardRow = {
                 c:SetPoint("TOPLEFT", row, "TOPLEFT", (i - 1) * (w + CARD_GAP), -2)
                 c:SetSize(w, 44)
                 c.itemID = it[1]
+                c.item = it
                 c.source = entry.boss
+                c.removed, c.probable = entry.removed, entry.probable
                 local r, g, b = QualityColor(it[4])
                 c.iconBorder:SetColorTexture(r * 0.8, g * 0.8, b * 0.8, 1)
                 c.icon:SetTexture(ItemIcon(it[1]))
                 c.name:SetText(it[2] or "?")
                 c.name:SetTextColor(r, g, b)
-                local src = type(it[5]) == "string" and it[5] or nil
-                c.sub:SetText(src and ((it[3] or "") .. "  •  " .. src) or (it[3] or ""))
+                local parts = { it[3] or "" }
+                local src = (it.sourceTip and (Call("LocalizeSourceTip", it.sourceTip) or it.sourceTip))
+                    or (it.allTrash and "all trash")
+                    or (type(it[5]) == "string" and it[5] ~= "" and it[5]) or nil
+                if src then parts[#parts + 1] = src end
+                if type(it[6]) == "string" and it[6] ~= "" then parts[#parts + 1] = "|cff59d959" .. FL(it[6]) .. "|r" end
+                if it.dropNote then parts[#parts + 1] = "|cffff9a3c" .. FL(it.dropNote) .. "|r" end
+                if type(it.makes) == "table" then parts[#parts + 1] = "|cffffd25amakes " .. (it.makes[2] or "?") .. "|r" end
+                if entry.probable then parts[#parts + 1] = "|cff9e9ea8not confirmed|r" end
+                c.sub:SetText(table.concat(parts, "  •  "))
                 c.check:SetShown(entry.owned)
-                c.icon:SetDesaturated(false)
+                c.icon:SetDesaturated(entry.removed and true or false)
+                c:SetAlpha(entry.removed and 0.5 or 1)
                 c:Show()
             elseif c then
                 c:Hide()
@@ -1033,6 +1136,7 @@ local LABEL_HEX = {
     ["You need"] = "ffb24d", ["Starts from"] = "ffd25a", ["Given"] = "59d959", ["Gives"] = "59d959",
     ["Note"] = "ffd25a", ["Rewards"] = "59d959", ["Start"] = "8fc8ff", ["Turn in"] = "8fc8ff",
     ["Optional"] = "c0a0ff", ["Summon"] = "ff5a4a", ["Party"] = "8fb8ff", ["Progress"] = "0bd29d",
+    ["Requires"] = "ffb24d", ["Leads to"] = "8fc8ff", ["Later"] = "59d959",
 }
 local TEXT_RGB = {
     ["Note"] = { 1, 0.92, 0.66 }, ["Start"] = { 0.74, 0.86, 1 }, ["Turn in"] = { 0.74, 0.86, 1 },
@@ -1054,6 +1158,114 @@ local function RewardLinks(text, items)
         end
     end
     return text
+end
+
+-- A reward item ({id, name, quality, count}) as a link with its colour.
+local function RewardItemText(it)
+    local r, g, b = QualityColor(it[3])
+    local text = ("|cff%02x%02x%02x|Hitem:%d|h%s|h|r"):format(r * 255, g * 255, b * 255, it[1] or 0, it[2] or "?")
+    if type(it[4]) == "number" and it[4] > 1 then text = text .. " x" .. it[4] end
+    return text
+end
+
+-- The XP a quest gives: live from your quest log, else what the journal recorded.
+local function QuestXP(q)
+    if q.id and GetQuestLogRewardXP and QuestInLog(q.id) then
+        local ok, xp = pcall(GetQuestLogRewardXP, q.id)
+        if ok and type(xp) == "number" and xp > 0 then return xp end
+    end
+    local known = q.id and type(FDJ.FOREVER_QUEST_XP_FALLBACK) == "table" and FDJ.FOREVER_QUEST_XP_FALLBACK[q.id]
+    return known or q.liveXPFallback
+end
+
+-- The Rewards line. The journal keeps rewards in two forms: one ready-made
+-- text (rewards), or - most quests - the parts: reward items (choose one, or
+-- all), items everyone also gets, XP, and a summary of money and reputation.
+local function RewardText(q)
+    if q.rewardSummary == nil then
+        if type(q.rewards) ~= "string" or q.rewards == "" then return nil end
+        local text = q.rewards:gsub("\n", "  •  ")
+        return RewardLinks(text, q.rewardItems)
+    end
+    local parts = {}
+    local function names(list)
+        local out = {}
+        for _, it in ipairs(type(list) == "table" and list or {}) do out[#out + 1] = RewardItemText(it) end
+        return out
+    end
+    local items = names(q.rewardItems)
+    if #items > 1 and q.rewardChoice then
+        parts[#parts + 1] = "Choose one: " .. table.concat(items, " or ")
+    elseif #items > 0 then
+        parts[#parts + 1] = table.concat(items, ", ")
+    end
+    local also = names(q.additionalRewardItems)
+    if #also > 0 then parts[#parts + 1] = "also " .. table.concat(also, ", ") end
+    local xp = QuestXP(q)
+    if type(xp) == "number" and (xp > 0 or q.showZeroXP) then
+        parts[#parts + 1] = (BreakUpLargeNumbers and BreakUpLargeNumbers(xp) or tostring(xp)) .. " XP"
+    end
+    -- money and reputation ("7s  •  Gadgetzan +100"); an XP figure written into it is already shown
+    local summary = tostring(q.rewardSummary):gsub("^%s*[%d,%.]+%s*XP%s*", ""):gsub("^\226\128\162%s*", "")
+    summary = Call("LocalizeFreeText", summary) or summary
+    if summary ~= "" then parts[#parts + 1] = summary end
+    if #parts == 0 then return nil end
+    return (q.rewardHeader and ("|cffffd25a" .. q.rewardHeader .. ":|r  ") or "") .. table.concat(parts, "  •  ")
+end
+
+-- A chain step done inside the dungeon, by the journal's own rule.
+local function IsDungeonStep(det, dungeonName)
+    if type(det) ~= "table" or det.dungeonStep == false then return false end
+    return det.dungeonStep == true or det.startsInDungeon == true
+        or Call("ObjectiveInsideDungeon", det, dungeonName)
+        or (det.pickup and Call("StartsInsideDungeon", det.pickup))
+        or Call("StartItemDropsIn", det, dungeonName) or false
+end
+
+-- What a quest needs in reputation: "Neutral with Timbermaw Hold", green once
+-- you have it, with where you stand.
+local function RepLines(q, add)
+    for _, need in ipairs(type(q.repNeeds) == "table" and q.repNeeds or {}) do
+        local want = need.standing or 0
+        local name, standing, cur, max = need.name, nil, nil, nil
+        if GetFactionInfoByID then
+            local n, _, st, lo, hi, value = GetFactionInfoByID(need.faction)
+            if n then name, standing = n, st end
+            if lo and hi and value then cur, max = value - lo, hi - lo end
+        elseif C_Reputation and C_Reputation.GetFactionDataByID then
+            local f = C_Reputation.GetFactionDataByID(need.faction)
+            if f then
+                name, standing = f.name or name, f.reaction
+                if f.currentStanding and f.currentReactionThreshold and f.nextReactionThreshold then
+                    cur = f.currentStanding - f.currentReactionThreshold
+                    max = f.nextReactionThreshold - f.currentReactionThreshold
+                end
+            end
+        end
+        local function label(n) return _G["FACTION_STANDING_LABEL" .. tostring(n)] or ("standing " .. tostring(n)) end
+        local mine = standing and (label(standing) .. ((cur and max and max > 0) and (" %d/%d"):format(cur, max) or ""))
+            or "not met them yet"
+        add({ label = "Requires", text = ("|cff%s%s with %s|r  |cff9e9ea8(you: %s)|r"):format(
+            (standing and standing >= want) and "59d959" or "ff5a4a", label(want), name or "?", mine) })
+    end
+end
+
+-- Open a quest on its own dungeon's page (a "Leads to" link).
+local function OpenQuest(id, dungeon)
+    if not dungeon then
+        for name, page in pairs(FDJ.DB) do
+            if type(page) == "table" and not page.questChainPage then
+                for _, pq in ipairs(page.quests or {}) do
+                    if pq.id == id then dungeon = name; break end
+                end
+            end
+            if dungeon then break end
+        end
+    end
+    if dungeon and FDJ.DB[dungeon] and dungeon ~= state.dungeon then SelectDungeon(dungeon) end
+    state.openQuests[id] = true
+    state.scrollTo = id
+    SelectTab("quests")
 end
 
 local function LineText(line)
@@ -1085,7 +1297,11 @@ local function QuestLines(q, dungeonName, d, rowWidth)
               text = ("|cffff5a4a%s has to be summoned: use the %s at the gong by his pool.|r"):format(help.boss or "The boss", help.itemName or "summon item"),
               custom = true, owned = have })
     end
+    local why = Unavailable(q)
+    if why then add({ text = "|cffff5a4a" .. why .. "|r" }) end
     if q.warning and q.warning ~= "" then add({ text = "|cffff9a3c" .. q.warning .. "|r" }) end
+    if IsRepeatable(q) then add({ text = "|cff6fb8ffRepeatable: you can do this one again and again.|r" }) end
+    RepLines(q, add)
     local prog = QuestInLog(q.id) and QuestProgress(q.id)
     if prog then add({ label = "Progress", text = prog }) end
     if q.id and FDJ.IsQuestShareable and FDJ.IsQuestShareable(q.id) then
@@ -1180,6 +1396,7 @@ local function QuestLines(q, dungeonName, d, rowWidth)
             local inLog = not done and QuestInLog(step.id)
             local txt = i .. ". " .. (step.name or "?")
             if step.summon then txt = txt .. "  |cff8fb8ff(to summon the boss)|r" end
+            if not step.summon and IsDungeonStep(det, dungeonName) then txt = txt .. "  |cff40c8c8(done inside the dungeon)|r" end
             if at[i] then txt = txt .. "  |cff8fb8ff<- " .. table.concat(at[i], ", ") .. "|r" end
             if isNext then
                 txt = ("|cff%s%s  (%s)|r"):format(accentHex, txt, inLog and "in your log" or "next")
@@ -1216,12 +1433,21 @@ local function QuestLines(q, dungeonName, d, rowWidth)
             .. (at[#chain + 1] and ("  |cff8fb8ff<- " .. table.concat(at[#chain + 1], ", ") .. "|r") or "") })
     end
 
-    if q.rewards and q.rewards ~= "" then
-        add({ label = "Rewards", text = RewardLinks(q.rewards:gsub("\n", "  •  "), q.rewardItems), links = true })
-    end
+    local rewardText = RewardText(q)
+    if rewardText then add({ label = "Rewards", text = rewardText, links = true }) end
     -- (a note that only introduces the linked optional quest is already the Optional line)
     if q.note and q.note ~= "" and not (q.noteQuestLink and q.note:match(":%s*$")) then
         add({ label = "Note", text = q.note })
+    end
+    -- what a follow-up quest offers later (the note says which)
+    for _, it in ipairs(type(q.noteRewardItems) == "table" and q.noteRewardItems or {}) do
+        add({ label = "Later", item = it, custom = true, text = RewardItemText(it), links = true })
+    end
+    -- the quest this one leads to, on its own dungeon's page
+    local lead = type(q.leadsToQuestLink) == "table" and q.leadsToQuestLink
+    if lead and lead.id and not (q.noteQuestLink and q.noteQuestLink.id) then
+        add({ label = "Leads to", text = (lead.name or "the next quest") .. (lead.dungeon and ("  |cff9e9ea8" .. lead.dungeon .. "|r") or ""),
+              mapText = "Open quest", action = function() OpenQuest(lead.id, lead.dungeon) end })
     end
 
     -- heights
@@ -1336,14 +1562,26 @@ local QuestRow = {
         local lbl = STATE_LABEL[st]
         row.dot:SetColorTexture(lbl[2], lbl[3], lbl[4], st == "available" and 0.35 or 0.9)
         row.icon:SetTexture(QUEST_ICON)
-        row.icon:SetDesaturated(st == "done" or st == "low")
+        row.icon:SetDesaturated(st == "done" or st == "low" or st == "unavailable")
         local tags = ""
         if FullChain(q) then tags = tags .. "  |cff8fb8ffCHAIN|r" end
         if q.requiredItem or q.requiredItems or q.noteItem then tags = tags .. "  |cffffb24dITEM NEEDED|r" end
         if q.startItem or q.startObject then tags = tags .. "  |cffffd25aSTARTS FROM ITEM|r" end
         if q.classOnly then tags = tags .. "  |cffc0a0ff" .. tostring(q.classOnly):upper() .. "|r" end
+        if q.profession and not q.classOnly then
+            tags = tags .. "  |cffc0a0ff" .. FL("PROF_" .. tostring(q.profession), tostring(q.profession)):upper() .. "|r"
+        end
+        if q.attunement and not q.classOnly and not q.profession then
+            tags = tags .. "  |cffc0a0ff" .. FL("ATTUNE_" .. tostring(q.attunement), tostring(q.attunement) .. " attunement"):upper() .. "|r"
+        end
+        if IsRepeatable(q) then tags = tags .. "  |cff6fb8ffREPEATABLE|r" end
+        if type(q.repNeeds) == "table" and q.repNeeds[1] then tags = tags .. "  |cffffb24dREPUTATION|r" end
         row.name:SetText((q.name or "?") .. tags)
-        row.name:SetTextColor(LevelColor(q.level))
+        if st == "unavailable" then
+            row.name:SetTextColor(0.5, 0.5, 0.52)
+        else
+            row.name:SetTextColor(LevelColor(q.level))
+        end
         local extra = ""
         if q.faction and q.faction ~= "Both" then extra = extra .. "  •  " .. q.faction end
         if data.side then extra = extra .. "  •  |cff8fb8ff" .. data.side .. "|r" end
@@ -1502,8 +1740,9 @@ end
 local function BossItems(d, needle)
     local items = {}
     for _, b in ipairs(d.bosses or {}) do
-        local show = Match(b.name, needle)
-        if not show then
+        -- (listHidden: the journal keeps these off its boss list)
+        local show = not b.listHidden and Match(b.name, needle)
+        if not show and not b.listHidden then
             for _, it in ipairs(b.loot or {}) do
                 if Match(it[2], needle) then show = true; break end
             end
@@ -1516,24 +1755,44 @@ end
 local function LootItems(d, needle, width)
     local cols = math.max(1, math.floor((width + CARD_GAP) / (CARD_W + CARD_GAP)))
     local items = {}
+    local function section(title, list)
+        if #list == 0 then return end
+        items[#items + 1] = { kind = "header", height = 30, data = { text = title .. "  (" .. #list .. ")" } }
+        for i = 1, #list, cols do
+            local chunk = {}
+            for j = i, math.min(i + cols - 1, #list) do chunk[#chunk + 1] = list[j] end
+            items[#items + 1] = { kind = "cards", height = 50, data = { items = chunk, cols = cols } }
+        end
+    end
     for _, b in ipairs(d.bosses or {}) do
-        if not state.boss or state.boss == b.name then
-            local list = {}
-            for _, it in ipairs(b.loot or {}) do
-                local owned = Owned(it[1])
-                local ok = Match(it[2], needle) or Match(b.name, needle)
-                if ok and state.usable and not CanUse(it[3]) then ok = false end
-                if ok and state.hideOwned and owned then ok = false end
-                if ok then list[#list + 1] = { item = it, boss = b.name, owned = owned } end
-            end
-            if #list > 0 then
-                items[#items + 1] = { kind = "header", height = 30, data = { text = (b.name or "?") .. "  (" .. #list .. ")" } }
-                for i = 1, #list, cols do
-                    local chunk = {}
-                    for j = i, math.min(i + cols - 1, #list) do chunk[#chunk + 1] = list[j] end
-                    items[#items + 1] = { kind = "cards", height = 50, data = { items = chunk, cols = cols } }
+        if not b.listHidden and (not state.boss or state.boss == b.name) then
+            local function collect(loot, probable)
+                local list = {}
+                for _, it in ipairs(type(loot) == "table" and loot or {}) do
+                    local owned = Owned(it[1])
+                    local ok = Match(it[2], needle) or Match(b.name, needle)
+                    if ok and state.usable and not CanUse(it[3]) then ok = false end
+                    if ok and state.hideOwned and owned then ok = false end
+                    if ok then
+                        list[#list + 1] = { item = it, boss = b.name, owned = owned,
+                            probable = probable, removed = b.lootRemoved and true or nil }
+                    end
                 end
+                return list
             end
+            local list = collect(b.loot)
+            -- the journal pins some drops first (Deathcharger's Reins): keep its order otherwise
+            local pinned, rest = {}, {}
+            for _, e in ipairs(list) do
+                if type(e.item.lootFirst) == "number" then pinned[#pinned + 1] = e else rest[#rest + 1] = e end
+            end
+            if #pinned > 0 then
+                table.sort(pinned, function(x, y) return x.item.lootFirst < y.item.lootFirst end)
+                for _, e in ipairs(rest) do pinned[#pinned + 1] = e end
+                list = pinned
+            end
+            section((b.name or "?") .. (b.lootRemoved and "  |cffff5a4aloot removed for now|r" or ""), list)
+            section((b.name or "?") .. "  |cff9e9ea8not confirmed, but probable|r", collect(b.probableLoot, true))
         end
     end
     return items
@@ -1589,8 +1848,8 @@ local function UpdateHeader()
         nb = nb + 1
         nl = nl + #(b.loot or {})
     end
-    local quests, done = QuestsFor(d, state.dungeon)
-    local counts = { bosses = tostring(nb), loot = tostring(nl), quests = done .. "/" .. #quests }
+    local _, done, questTotal = QuestsFor(d, state.dungeon)
+    local counts = { bosses = tostring(nb), loot = tostring(nl), quests = done .. "/" .. questTotal }
     for _, t in ipairs(win.tabs) do
         local on = t.key == state.tab
         local r, g, b = Accent()
@@ -2012,6 +2271,10 @@ JQ.byKey[KEY].onLoad = function()
     SLASH_JASEQOLDJ1 = "/jdj"
     SlashCmdList.JASEQOLDJ = function() Toggle() end
 end
+
+-- for tests
+JQ._Journal = { Set = function(ns, st) FDJ, state = ns, st end, RewardText = RewardText, QuestState = QuestState,
+    QuestsFor = QuestsFor, QuestLines = QuestLines, LootItems = LootItems, BossItems = BossItems, IsDungeonStep = IsDungeonStep }
 
 JQ.byKey[KEY].onDisable = function()
     if win and win:IsShown() then win:Hide() end

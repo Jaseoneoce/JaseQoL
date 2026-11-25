@@ -1682,6 +1682,7 @@ local MINI_EVENTS = {
     PLAYER_INTERACTION_MANAGER_FRAME_SHOW = true, MERCHANT_SHOW = true,
 }
 local mini, miniHidden, miniQueued
+local dockHost   -- a frame of another JaseTools window the plan sits in while that window is open
 
 local function Sum(t)
     local n = 0
@@ -1977,9 +1978,12 @@ local function MakeNow(id, n)
                 end
             end
         end
-        -- not in the open window (or none open): bars are smelted, so that window can be opened for you
-        if SMELT[id] and T.OpenTradeSkill and pcall(T.OpenTradeSkill, MINING_LINE) then
-            Status(("Smelting opened. Click make again to smelt %s."):format(name))
+        -- not in the open window (or none open): open the profession that makes
+        -- it (remembered from when its recipes were read; bars are smelted)
+        local known = JaseQoLDB.recipeIndex and JaseQoLDB.recipeIndex[id]
+        local line = (type(known) == "table" and known.line) or (SMELT[id] and MINING_LINE) or nil
+        if line and T.OpenTradeSkill and pcall(T.OpenTradeSkill, line) then
+            Status(("Opened the profession that makes %s. Click make again."):format(name))
             return
         end
         Status(open and ("%s isn't in the open profession window. Open the profession that makes it, then click make."):format(name)
@@ -2229,6 +2233,15 @@ local function BuildMini()
     -- anchored by its top left corner, so it grows downwards as steps are added
     function mini:Place()
         self:ClearAllPoints()
+        if dockHost then
+            -- docked: part of that window, not a floating box
+            self:SetParent(dockHost)
+            self:SetPoint("TOPLEFT", dockHost, "TOPLEFT", 0, 0)
+            self:SetFrameLevel(dockHost:GetFrameLevel() + 2)
+            return
+        end
+        self:SetParent(UIParent)
+        self:SetFrameStrata("MEDIUM")
         local pos = db.mini.pos
         if pos then
             self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", pos[1], pos[2])
@@ -2240,9 +2253,10 @@ local function BuildMini()
     mini:EnableMouse(true)
     mini:SetMovable(true)
     mini:RegisterForDrag("LeftButton")
-    mini:SetScript("OnDragStart", mini.StartMoving)
+    mini:SetScript("OnDragStart", function(self) if not dockHost then self:StartMoving() end end)
     mini:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
+        if dockHost then return end
         local x, y = self:GetLeft(), self:GetTop()
         if x and y then db.mini.pos = { x, y } end
         self:Place()
@@ -2277,14 +2291,19 @@ local function BuildMini()
 end
 
 local function RefreshMini()
-    local show = db and Alts and Alts.MyName() and not miniHidden
-        and JQ.IsEnabled(KEY) and JQ.IsEnabled(MINI_KEY) and next(RealmRequests()) ~= nil
+    -- docked in the Professions window it always shows (that window asked for it)
+    local show = db and Alts and Alts.MyName() and JQ.IsEnabled(KEY) and next(RealmRequests()) ~= nil
+        and (dockHost ~= nil or (not miniHidden and JQ.IsEnabled(MINI_KEY)))
     local lines = show and MiniLines() or {}
     if #lines == 0 then
         if mini then mini:Hide() end
         return
     end
     if not mini then BuildMini() end
+    if mini.dockedTo ~= dockHost then
+        mini.dockedTo = dockHost
+        mini:Place()
+    end
     -- text lines wrap, so each row is placed under the one before by its real height
     local y = 30
     for i, d in ipairs(lines) do
@@ -2312,7 +2331,7 @@ local function RefreshMini()
             end)
             -- dragging a row moves the popout, like dragging its background
             row:RegisterForDrag("LeftButton")
-            row:SetScript("OnDragStart", function() mini:StartMoving() end)
+            row:SetScript("OnDragStart", function() if not dockHost then mini:StartMoving() end end)
             row:SetScript("OnDragStop", function() mini:GetScript("OnDragStop")(mini) end)
             mini.lines[i] = row
         end
@@ -2558,11 +2577,14 @@ local function Index()
     return JaseQoLDB.recipeIndex
 end
 
-local function Record(outID, n, reagents)
+-- line: the skill line of the profession window it was read in (so "make"
+-- can open that window by itself later)
+local function Record(outID, n, reagents, line)
     if not outID or not next(reagents) then return end
     local idx = Index()
     local e = idx[outID] or { by = {} }
     e.n, e.r = math.max(1, n or 1), reagents
+    if line then e.line = line end
     e.by[Alts.MyName()] = true
     idx[outID] = e
 end
@@ -2571,6 +2593,11 @@ local function ScanRecipes()
     local T = C_TradeSkillUI
     if T and T.GetAllRecipeIDs and ProfessionsFrame and ProfessionsFrame:IsShown() then
         if (T.IsTradeSkillLinked and T.IsTradeSkillLinked()) or (T.IsTradeSkillGuild and T.IsTradeSkillGuild()) then return end
+        local line
+        if T.GetBaseProfessionInfo then
+            local ok, prof = pcall(T.GetBaseProfessionInfo)
+            line = ok and type(prof) == "table" and prof.professionID or nil
+        end
         for _, id in ipairs(T.GetAllRecipeIDs() or {}) do
             local info = T.GetRecipeInfo and T.GetRecipeInfo(id)
             if info and info.learned then
@@ -2582,7 +2609,7 @@ local function ScanRecipes()
                         local reagent = slot.reagents and slot.reagents[1]
                         if basic and reagent and reagent.itemID then r[reagent.itemID] = slot.quantityRequired or 1 end
                     end
-                    Record(sch.outputItemID, sch.quantityMin, r)
+                    Record(sch.outputItemID, sch.quantityMin, r, line)
                 end
             end
         end
@@ -2653,7 +2680,7 @@ local function Breakdown(list, crafts)
             seen[id] = nil
         else
             -- not seen anywhere yet: still asked for, the plan lists it as short
-            row.kind = "missing"
+            row.kind, row.buyQty = "missing", still
             request[id] = (request[id] or 0) + still
             tot.still = tot.still + still
         end
@@ -2861,6 +2888,8 @@ end
 
 local function ShowSide(frame)
     if not JQ.IsEnabled(KEY) or not frame then return end
+    -- the Professions window has its own materials pane
+    if JQ.ProfView and (JQ.ProfView.Active() or (frame == ProfessionsFrame and JQ.ProfView.Wanted())) then return end
     if not side then BuildSide() end
     side.host = frame
     side:Place(frame)
@@ -3065,8 +3094,85 @@ end
 JQ.byKey[BAR_KEY].onDisable = function() StopMaking() end
 JQ.byKey[BAR_KEY].onEnable = function() JQ.Try("crafting progress bar: EllesmereUI unlock mode", RegisterCraftBar) end
 
+-- Plan the materials of N crafts of something: the bank run, the request to
+-- alts, what to make, and the buy list (an Auctionator shopping list when
+-- Auctionator is there). Planning the same label again takes the earlier plan's
+-- asks back out first, so nothing doubles. list = { {id, per}, ... }.
+local function PlanFor(label, list, crafts, title)
+    local me = Alts and Alts.MyName()
+    if not (me and label) then return false end
+    title = title or label
+    local mine = RequestOf(me)
+    local again = false
+    if mine then
+        for id, n in pairs((mine.plans and mine.plans[label]) or {}) do
+            local e = mine.items[id]
+            if e then e.need = math.max(e.sent or 0, (e.need or 0) - n) end
+        end
+        if mine.plans then mine.plans[label] = nil end
+        for i = #(mine.recipes or {}), 1, -1 do
+            if mine.recipes[i] == label then
+                table.remove(mine.recipes, i)
+                again = true
+            end
+        end
+    end
+    local rows, request, tot = Breakdown(list, crafts or 1)
+    local own, made = PlanOwn(me, rows)
+    if not next(request) and own == 0 and made == 0 then
+        if again then AddRequest(me, {}, nil) end   -- tidies away what was taken back out
+        JQ.Print(tot.vendor > 0 and ("Nothing to plan for %s: the rest is sold by vendors."):format(title)
+            or ("Nothing to plan for %s: it's all in your bags."):format(title))
+        return false
+    end
+    AddRequest(me, request, label)
+    if next(request) then
+        local r = RequestOf(me)
+        if r then
+            r.plans = r.plans or {}
+            r.plans[label] = {}
+            for id, n in pairs(request) do r.plans[label][id] = n end
+        end
+    end
+    if again then JQ.Print(("Planned %s again, from what you have now."):format(label)) end
+    if own > 0 then JQ.Print(("Bank run for %s: %d item(s) to take from your own bank or mail."):format(label, own)) end
+    if made > 0 then
+        local parts = {}
+        for _, e in ipairs(rows) do
+            if e.kind == "make" and (e.makeQty or 0) > 0 then parts[#parts + 1] = ItemText(e.id, e.makeQty) end
+        end
+        JQ.Print("To make yourself: " .. table.concat(parts, ", ") .. ". The plan gathers what they're made from.")
+    end
+    if next(request) then
+        local parts = {}
+        for id, n in pairs(request) do parts[#parts + 1] = ItemText(id, n) end
+        JQ.Print(("Requested for %s: %s."):format(label, table.concat(parts, ", ")))
+    end
+    local toBuy, order = BuyList(me)
+    if #order > 0 then
+        if ShoppingListAPI() then
+            MakeShoppingList(order, toBuy)
+        else
+            JQ.Print(("%d item(s) are on no alt: the Requests tab lists what to buy."):format(#order))
+        end
+    end
+    return true
+end
+
 -- for other modules (Mastercraft's Request from alts button)
-JQ.Requests = { Breakdown = Breakdown, AddRequest = AddRequest, RequestOf = RequestOf, BuyList = BuyList,
+JQ.Requests = {
+    PlanFor = PlanFor, HideSide = function() HideSide() end,
+    MakeRecipe = MakeRecipe, IsVendor = function(id) return IsVendor(id) end, Money = Money,
+    Dock = function(host) dockHost = host; QueueMini() end,
+    Undock = function()
+        dockHost = nil
+        if mini then
+            mini.dockedTo = nil
+            mini:Place()
+        end
+        QueueMini()
+    end,
+    PlanShown = function() return mini ~= nil and mini:IsShown() end, Breakdown = Breakdown, AddRequest = AddRequest, RequestOf = RequestOf, BuyList = BuyList,
     AddOwn = AddOwn, OwnFetch = OwnFetch, Holdings = Holdings, PlanOwn = PlanOwn, MakeLeft = MakeLeft,
     MakeShoppingList = MakeShoppingList, ShoppingListAPI = ShoppingListAPI, ItemText = ItemText, NameIndex = NameIndex }
 
