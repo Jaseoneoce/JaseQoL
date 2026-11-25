@@ -95,6 +95,7 @@ end
 
 -- {[id] = still needed} for a recipient
 local IsVendor   -- forward (vendor list below): vendor items are never requested
+local QueueMini  -- forward (plan popout below): redraw it shortly
 
 local function Remaining(recipient)
     local r = RequestOf(recipient)
@@ -113,7 +114,12 @@ local function Tidy(recipient)
         -- done, or something you buy from a vendor (requests made before that rule)
         if (e.need or 0) - (e.sent or 0) <= 0 or IsVendor(id) then r.items[id] = nil end
     end
-    if not next(r.items) then RealmRequests()[recipient] = nil end
+    if not next(r.items) then
+        r.crates = nil
+        -- all sent: the request stays, as "collect the mail", until its owner
+        -- has been to a mailbox (r.done = what each alt sent)
+        if not (r.done and next(r.done)) then RealmRequests()[recipient] = nil end
+    end
 end
 
 local function AddRequest(recipient, wants, label)
@@ -126,7 +132,8 @@ local function AddRequest(recipient, wants, label)
         end
     end
     if label then table.insert(r.recipes, label) end
-    if not next(r.items) then RealmRequests()[recipient] = nil end
+    Tidy(recipient)
+    QueueMini(true)
 end
 
 -------------------------------------------------------------------------------
@@ -1103,6 +1110,7 @@ local function Rows()
                       end
                       Tidy(me)
                       if win then win:Refresh() end
+                      QueueMini()
                   end })
         end
         local steps, short = Plan(me)
@@ -1131,6 +1139,11 @@ local function Rows()
             add({ head = "Not on your alts" })
             add({ text = table.concat(list, ", ") .. "  |cff9e9ea8(buy or farm these)|r", indent = true })
         end
+    end
+
+    if mine and not next(mine.items) and mine.done and next(mine.done) then
+        add({ head = "Requested for " .. NameOf(me) })
+        add({ text = "Everything has been sent. Collect it from a mailbox.", indent = true })
     end
 
     -- Everything the plan says to buy, as one Auctionator shopping list.
@@ -1253,6 +1266,7 @@ function Status(text, quiet)
     if win and win.status then win.status:SetText(text or "") end
     if text and text ~= "" and not quiet then JQ.Print(text) end
     if win and win:IsShown() then win:Refresh() end
+    QueueMini()
 end
 
 JQ.Hub.Register({
@@ -1265,6 +1279,214 @@ JQ.Hub.Register({
         return win
     end,
 })
+
+-------------------------------------------------------------------------------
+--  Plan popout: while a request is open, a small list of its steps on every
+--  character: who has sent (ticked, kept in the request as r.done), who is
+--  next, and this character's own step with its button. Drag it to move it.
+-------------------------------------------------------------------------------
+local MINI_KEY = "requestMini"
+JQ.AddModule({
+    key = MINI_KEY,
+    label = "Request plan popout",
+    description = "While a request is open, a small list of the plan's steps shows on every character: who has sent, who is next, and this character's own step with its Pull from bank / Send button. Drag it to move it. Needs Request mats from alts.",
+    default = true,
+})
+
+local MINI_W, MINI_LINE = 280, 16
+local TICK = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t"
+local MINI_EVENTS = {
+    PLAYER_LOGIN = true, BAG_UPDATE_DELAYED = true, MAIL_SHOW = true, MAIL_CLOSED = true,
+    MAIL_SEND_SUCCESS = true, MAIL_FAILED = true, BANKFRAME_OPENED = true, BANKFRAME_CLOSED = true,
+    PLAYER_INTERACTION_MANAGER_FRAME_SHOW = true, MERCHANT_SHOW = true,
+}
+local mini, miniHidden, miniQueued
+
+local function Sum(t)
+    local n = 0
+    for _, v in pairs(t or {}) do n = n + v end
+    return n
+end
+
+-- { {text, now = bool, head = bool}, ... } for every open request on this realm
+local function MiniLines()
+    local me = Alts.MyName()
+    local lines, names = {}, {}
+    for recipient in pairs(RealmRequests()) do names[#names + 1] = recipient end
+    table.sort(names, function(a, b)
+        if (a == me) ~= (b == me) then return a == me end
+        return a < b
+    end)
+    for _, recipient in ipairs(names) do
+        local r = RequestOf(recipient)
+        local steps, short = Plan(recipient)
+        steps = steps or {}
+        local inPlan, sent = {}, {}
+        for _, s in ipairs(steps) do inPlan[s.alt] = true end
+        -- an alt with more still to send shows as a step, not as done
+        for alt in pairs(r.done or {}) do
+            if not inPlan[alt] then sent[#sent + 1] = alt end
+        end
+        table.sort(sent)
+        if #steps > 0 or #sent > 0 then
+            local total = #sent + #steps + 1
+            lines[#lines + 1] = { head = true, text = ("For %s  |cff9e9ea8step %d of %d|r"):format(
+                NameOf(recipient), math.min(#sent + 1, total), total) }
+            for _, alt in ipairs(sent) do
+                lines[#lines + 1] = { text = ("%s %s  |cff9e9ea8sent %d|r"):format(TICK, NameOf(alt), Sum(r.done[alt])) }
+            end
+            local n = #sent
+            for i, s in ipairs(steps) do
+                n = n + 1
+                local count, fromMail = 0, 0
+                for _, e in pairs(s.items) do
+                    count = count + (e.bags or 0) + (e.bank or 0) + (e.mail or 0)
+                    fromMail = fromMail + (e.mail or 0)
+                end
+                local text
+                if s.alt == me then
+                    local what = s.needsBank and "bank first, then a mailbox"
+                        or (fromMail > 0 and "take them out of your mail first" or "at a mailbox")
+                    text = ("%d. |cffffd25aThis character|r: send %d - %s"):format(n, count, what)
+                else
+                    local where = Alts.WhereText(s.alt)
+                    text = ("%d. %s: %s %d%s"):format(n, NameOf(s.alt), s.needsBank and "bank, then mail" or "mail",
+                        count, where and ("  |cff9e9ea8" .. where .. "|r") or "")
+                end
+                lines[#lines + 1] = { text = text, now = (i == 1) or s.alt == me }
+            end
+            lines[#lines + 1] = { now = #steps == 0, text = ("%d. %s: collect the mail"):format(n + 1,
+                recipient == me and "|cffffd25aThis character|r" or NameOf(recipient)) }
+        else
+            lines[#lines + 1] = { head = true, text = "For " .. NameOf(recipient) }
+        end
+        if short and next(short) then
+            local list, more = {}, 0
+            for id, k in pairs(short) do
+                if #list < 2 then list[#list + 1] = ItemText(id, k) else more = more + 1 end
+            end
+            lines[#lines + 1] = { text = "|cffff7070Buy or farm:|r " .. table.concat(list, ", ")
+                .. (more > 0 and (" +" .. more .. " more") or "") }
+        end
+    end
+    return lines
+end
+
+local function BuildMini()
+    db.mini = db.mini or {}
+    mini = CreateFrame("Frame", "JaseQoLRequestMini", UIParent)
+    mini:SetWidth(MINI_W)
+    mini:SetFrameStrata("MEDIUM")
+    mini:SetClampedToScreen(true)
+    UI.Fill(mini, 0.045, 0.045, 0.05, 0.92)
+    UI.Border(mini)
+    -- anchored by its top left corner, so it grows downwards as steps are added
+    function mini:Place()
+        self:ClearAllPoints()
+        local pos = db.mini.pos
+        if pos then
+            self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", pos[1], pos[2])
+        else
+            self:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 20, -220)
+        end
+    end
+    mini:Place()
+    mini:EnableMouse(true)
+    mini:SetMovable(true)
+    mini:RegisterForDrag("LeftButton")
+    mini:SetScript("OnDragStart", mini.StartMoving)
+    mini:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local x, y = self:GetLeft(), self:GetTop()
+        if x and y then db.mini.pos = { x, y } end
+        self:Place()
+    end)
+
+    mini.title = UI.Text(mini, 12)
+    mini.title:SetPoint("TOPLEFT", 10, -8)
+    mini.title:SetText(("|cff%sRequest plan|r"):format(UI.AccentHex()))
+    local close = UI.Button(mini, "x", 18, 18)
+    close:SetPoint("TOPRIGHT", -5, -5)
+    close:SetScript("OnClick", function()
+        miniHidden = true
+        mini:Hide()
+        JQ.Print("Request plan hidden until you log in again or make a new request. The Requests tab still has it.")
+    end)
+
+    mini.lines = {}
+    mini.action = UI.Button(mini, "", 124, 22)
+    mini.action:SetPoint("BOTTOMLEFT", 10, 8)
+    mini.action:SetScript("OnClick", function(self)
+        if self.run then JQ.Try("request plan popout: button", self.run) end
+        QueueMini()
+    end)
+    mini.details = UI.Button(mini, "Details", 124, 22)
+    mini.details:SetPoint("BOTTOMRIGHT", -10, 8)
+    mini.details:SetScript("OnClick", function() JQ.Hub.Show("requests") end)
+end
+
+local function RefreshMini()
+    local show = db and Alts and Alts.MyName() and not miniHidden
+        and JQ.IsEnabled(KEY) and JQ.IsEnabled(MINI_KEY) and next(RealmRequests()) ~= nil
+    local lines = show and MiniLines() or {}
+    if #lines == 0 then
+        if mini then mini:Hide() end
+        return
+    end
+    if not mini then BuildMini() end
+    for i, d in ipairs(lines) do
+        local fs = mini.lines[i]
+        if not fs then
+            fs = UI.Text(mini, 11)
+            fs:SetPoint("TOPLEFT", 10, -30 - (i - 1) * MINI_LINE)
+            fs:SetPoint("RIGHT", -10, 0)
+            mini.lines[i] = fs
+        end
+        fs:SetText(d.text)
+        if d.head or d.now then
+            fs:SetTextColor(1, 1, 1)
+        else
+            fs:SetTextColor(UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+        end
+        fs:Show()
+    end
+    for i = #lines + 1, #mini.lines do mini.lines[i]:Hide() end
+
+    -- this character's step, as one button
+    local jobs = MyJobs()
+    local mine, bank = jobs[1], false
+    for _, j in ipairs(jobs) do if j.needsBank then bank = true end end
+    local b = mini.action
+    if not mine then
+        b:Hide()
+    elseif bank then
+        b.text:SetText("Pull from bank")
+        b.run = PullFromBank
+        b:SetEnabledLook(Alts.IsBankOpen() and true or false)
+        b:Show()
+    else
+        b.text:SetText("Send")
+        b.run = function() StartSend(mine.to) end
+        b:SetEnabledLook((mailOpen and not job) and true or false)
+        b:Show()
+    end
+    mini:SetHeight(30 + #lines * MINI_LINE + 38)
+    mini:Show()
+end
+
+-- Redraw shortly (many events arrive together). show = a hidden popout comes back.
+function QueueMini(show)
+    if show then miniHidden = false end
+    if miniQueued then return end
+    miniQueued = true
+    C_Timer.After(0.3, function()
+        miniQueued = false
+        JQ.Try("request plan popout", RefreshMini)
+    end)
+end
+
+JQ.byKey[MINI_KEY].onEnable = function() QueueMini(true) end
+JQ.byKey[MINI_KEY].onDisable = function() if mini then mini:Hide() end end
 
 -------------------------------------------------------------------------------
 --  Profession window side panel
@@ -1715,6 +1937,7 @@ local function HasJobs() return #MyJobs() > 0 end
 
 ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
+    if MINI_EVENTS[event] then QueueMini() end
     if event == "MERCHANT_SHOW" or event == "MERCHANT_UPDATE" then
         JQ.Try("requests: learning vendor items", LearnVendor)
         for recipient in pairs(RealmRequests()) do Tidy(recipient) end
@@ -1744,6 +1967,10 @@ ev:SetScript("OnEvent", function(_, event, ...)
         mailOpen = true
         if HasJobs() then JQ.Hub.Show("requests") end
     elseif event == "MAIL_CLOSED" then
+        -- everything had been sent and I've now been to a mailbox: the plan is finished
+        local me = Alts.MyName()
+        local mine = mailOpen and me and RequestOf(me)
+        if mine and not next(mine.items) then RealmRequests()[me] = nil end
         mailOpen = false
         if job then FinishSend("Mailbox closed: stopped.") end
         if win and win:IsShown() then win:Refresh() end
@@ -1762,6 +1989,13 @@ ev:SetScript("OnEvent", function(_, event, ...)
         local r = RequestOf(job.to)
         for id, n in pairs(job.batch or {}) do
             if r and r.items[id] then r.items[id].sent = (r.items[id].sent or 0) + n end
+        end
+        -- what I've sent, so the plan popout can tick this step off on every character
+        local me = Alts.MyName()
+        if r and me and job.batch and next(job.batch) then
+            r.done = r.done or {}
+            r.done[me] = r.done[me] or {}
+            for id, n in pairs(job.batch) do r.done[me][id] = (r.done[me][id] or 0) + n end
         end
         Alts.AddMail(job.to, job.batch or {})
         job.batch = nil
@@ -1824,6 +2058,7 @@ function AskKeep(id)
             if n and prompt.itemID then db.keep[prompt.itemID] = n > 0 and math.floor(n) or nil end
             prompt:Hide()
             if win and win:IsShown() then win:Refresh() end
+            QueueMini()
         end
         prompt.box:SetScript("OnEnterPressed", Accept)
         prompt.box:SetScript("OnEscapePressed", function() prompt:Hide() end)
@@ -1857,11 +2092,16 @@ JQ.byKey[KEY].onLoad = function()
         "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED", "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" }) do
         pcall(ev.RegisterEvent, ev, e)
     end
-    Alts.OnChange(function() if win and win:IsShown() then win:Refresh() end end)
+    Alts.OnChange(function()
+        if win and win:IsShown() then win:Refresh() end
+        QueueMini()
+    end)
 end
+JQ.byKey[KEY].onEnable = function() QueueMini(true) end
 JQ.byKey[KEY].onDisable = function()
     HideSide()
     if win then win:Hide() end
+    if mini then mini:Hide() end
 end
 
 -- for tests

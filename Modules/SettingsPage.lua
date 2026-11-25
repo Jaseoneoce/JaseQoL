@@ -24,7 +24,7 @@ local GROUPS = {
     { "Exploring", "Legacy Challenges and the map", {
         { "exploreWaypoints", { "exploreShowZone", "exploreShowAll" } } } },
     { "Alts, bank & mail", "Alt inventory, Send mats, Requests and crates", {
-        { "altTracker", { "altTooltip", "altInventory", "bankMail", "altRequest" } } } },
+        { "altTracker", { "altTooltip", "altInventory", "bankMail", "altRequest", "requestMini" } } } },
     { "Selling & auction house", "Sell warnings and auction house help", { "boeGuard", "ahCopperWarn" } },
     { "Skins", "EllesmereUI look for other addons", { "mcSkin", "gosSkin" } },
     { "Buttons", "Where to open JaseTools from", { "hubButton", "minimapButton" } },

@@ -2,6 +2,14 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.9.0 - 2026-11-25
+
+### New
+- **Request plan popout** - while a request for mats is open, a small **Request plan** box shows on every character with the plan step by step: who has already sent (ticked, with how many), who is next and where they are parked, and this character's own step with its **Pull from bank** / **Send** button. Progress is remembered across characters. Drag it to move it; **x** hides it until you log in again or make a new request; **Details** opens the Requests tab. Has its own switch (`/jq requestMini`).
+
+### Changed
+- **Requests: the last step is collecting the mail** - once every alt has sent, the request stays as "collect the mail" until the character who asked has been to a mailbox, instead of disappearing when the last mail goes out.
+
 ## v1.8.1 - 2026-11-23
 
 ### Fixed
