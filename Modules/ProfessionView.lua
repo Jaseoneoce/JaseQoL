@@ -2,24 +2,41 @@
 --  JaseTools: Professions (one window)
 --
 --  Opening a profession shows this window instead of the game's:
---    left    : your recipes, grouped as the game groups them, coloured by
---              skill-up chance, with how many you can make; search and filters
+--    left    : your recipes, grouped as the game groups them, with the
+--              game's skill-up chevrons, the profit of one craft and how many
+--              you can make; search, filters, and sorting by profit
 --    middle  : the recipe you picked: what it needs for N crafts (you have /
 --              your alts have, and what would be made or bought), what the
 --              materials cost on the auction house - buying each one, or
 --              making it yourself from its own materials where that is
 --              cheaper - Make, Make all and Plan mats
---    right   : your plan (the request plan with its Take from bank / Send /
---              Make buttons and auto ticks, docked here while the window is
---              open) and, with Mastercraft, its mini guide docked under it
+--    right   : two tabs. Plan: the request plan with its Take from bank /
+--              Send / Make buttons and auto ticks, docked here while the
+--              window is open. Guide: the step Mastercraft's guide is on,
+--              drawn here as an order of work - what has to be made first
+--              (sub-crafts, each with its own Make), then the main craft -
+--              or Mastercraft's own mini guide panel, docked.
 --  "Classic view" opens the game's own window until you close it.
+--  While your character moves the window fades to 20% so you can see where
+--  you're going (like the world map); it's whole again when you stop, or
+--  while the mouse is over it.
+--  WoW Forever's all-professions book (K, the micro-menu button) opens this
+--  window straight away on the profession you used last; its "All
+--  professions" button opens the book itself. Forever's book has no
+--  ProfessionsBookFrame (the debug log showed it): it is caught where it is
+--  opened, ToggleProfessionsBook.
 --
 --  The game's window is still open underneath: a profession's data and
 --  crafting only work while it is, and hiding it would close the profession.
---  So it is shrunk out of sight and made see-through, and put back whenever
---  this window closes or Classic view is asked for.
+--  So it is moved off the screen and made see-through (never resized: that
+--  breaks its layout), and put back whenever this window closes or Classic
+--  view is asked for.
 --
---  JaseQoLDB.profView = { win = {...}, canMake = bool, skillUps = bool, guide = bool }
+--  JaseQoLDB.profView = { win = {...}, canMake = bool, skillUps = bool,
+--    sort = nil | "desc" | "asc" (by profit), tab = "plan" | "guide",
+--    theirGuide = bool (the Guide tab shows Mastercraft's own panel), lastLine = skill line last open,
+--    skip = { ["Character|Profession"] = { [step title] = true } } (guide steps you skipped here),
+--    debug = bool, debugLog = { "time  text", ... } (/jprof debug: what opening professions does) }
 -------------------------------------------------------------------------------
 local _, JQ = ...
 local KEY = "profView"
@@ -27,7 +44,7 @@ local KEY = "profView"
 JQ.AddModule({
     key = KEY,
     label = "Professions: one window",
-    description = "Opening a profession shows one JaseTools window instead of the game's: your recipes with search and filters, the picked recipe's materials (yours and your alts') with Make and Plan mats, and your request plan and Mastercraft's mini guide docked beside them. Classic view opens the game's own window. Off unless you switch it on (/jq profView). Needs Request mats from alts.",
+    description = "Opening a profession shows one JaseTools window instead of the game's: your recipes with search and filters, the picked recipe's materials (yours and your alts') with Make and Plan mats, and your request plan and Mastercraft's mini guide docked beside them. Classic view opens the game's own window. Off unless you switch it on: here, with /jq profView, or with the JaseTools view button on the game's profession window. Needs Request mats from alts.",
     default = false,
 })
 
@@ -37,6 +54,8 @@ local classic = false      -- the game's own window was asked for, until it clos
 local tucked               -- the game's window's own scale and alpha while it is out of sight
 local recipes = {}         -- the open profession's learned recipes
 local byID = {}
+local byOut = {}           -- [item made] = recipe
+local byName = {}
 local selected             -- recipe id
 local pending = false
 
@@ -47,9 +66,70 @@ local LINES = {
     Mining = 186, Tailoring = 197,
 }
 
+-------------------------------------------------------------------------------
+--  Debug log (/jprof debug): every step of opening a profession, kept in
+--  JaseQoLDB.profView.debugLog (saved on /reload or logout) so it can be read.
+-------------------------------------------------------------------------------
+local function Dbg(fmt, ...)
+    if not (db and db.debug) then return end
+    local ok, text = pcall(string.format, fmt, ...)
+    if not ok then text = tostring(fmt) end
+    db.debugLog = db.debugLog or {}
+    table.insert(db.debugLog, ("%.2f  %s"):format(GetTime and GetTime() or 0, text))
+    while #db.debugLog > 400 do table.remove(db.debugLog, 1) end
+end
+
+-- Your professions as the game lists them (the spellbook's), name -> the skill line
+-- the game opens it with. Those are what opening a profession needs.
+local function GameLines()
+    local out = {}
+    if not (GetProfessions and GetProfessionInfo) then return out end
+    local ok, a, b, c, d, e, f = pcall(GetProfessions)
+    if not ok then return out end
+    for _, idx in pairs({ a, b, c, d, e, f }) do
+        if idx then
+            local ok2, name, _, _, _, _, _, line = pcall(GetProfessionInfo, idx)
+            if ok2 and name and line then out[name] = line end
+        end
+    end
+    return out
+end
+
+-- The skill line to open a profession with: the game's own list first, then what
+-- this window learned while it was open, then the usual IDs.
+local function LineFor(prof)
+    if not prof then return nil end
+    local game = GameLines()
+    if game[prof] then return game[prof] end
+    if prof == "Smelting" and game.Mining then return game.Mining end
+    local learned = db and db.lines
+    if learned and learned[prof] then return learned[prof] end
+    if prof == "Mining" and learned and learned.Smelting then return learned.Smelting end
+    return LINES[prof] or (prof == "Smelting" and LINES.Mining) or nil
+end
+
+local LINES_BY_ID = {}
+for _, id in pairs(LINES) do LINES_BY_ID[id] = true end
+
 local DIFF = {   -- skill-up chance, as the game colours it
     [0] = { 1.00, 0.50, 0.25 }, [1] = { 1.00, 1.00, 0.00 }, [2] = { 0.25, 0.75, 0.25 }, [3] = { 0.50, 0.50, 0.50 },
 }
+-- The game's own skill-up chevrons (its recipe list's art), by skill-up chance; none when trivial.
+local SKILL_ATLAS = { [0] = "Professions-Icon-Skill-High", [1] = "Professions-Icon-Skill-Medium", [2] = "Professions-Icon-Skill-Low" }
+local SKILL_TEXT = { [0] = "^^^", [1] = "^^", [2] = "^" }      -- where that art isn't in the client
+local SKILL_WORD = { [0] = "high", [1] = "medium", [2] = "low", [3] = "none" }
+local atlasOK = {}
+local function HasAtlas(name)
+    if atlasOK[name] == nil then
+        local ok, info = pcall(function() return C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name) end)
+        atlasOK[name] = (ok and info) and true or false
+    end
+    return atlasOK[name]
+end
+local RecipeProfit   -- forward (the gold section below)
+local ShowSwitch     -- forward (the button on the game's own window, below)
+local OpenBook       -- forward (WoW Forever's all-professions book, below)
+local ProfessionInfo -- forward (the open profession, below)
 
 local ItemCount = (C_Item and C_Item.GetItemCount) or GetItemCount
 local function T() return C_TradeSkillUI end
@@ -69,18 +149,45 @@ end
 -------------------------------------------------------------------------------
 --  The game's window: out of sight but open
 -------------------------------------------------------------------------------
+-- Off the screen, where nothing of it can be seen or clicked.
+local function Park(f)
+    f:ClearAllPoints()
+    f:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", -4000, -4000)
+end
+
+local parkHooked = false
 local function Tuck(on)
     local f = Blizzard()
     if not f then return end
     if on then
-        if not tucked then tucked = { scale = f:GetScale(), alpha = f:GetAlpha() } end
+        if not tucked then
+            -- where it was, to put it back exactly
+            local points = {}
+            for i = 1, (f.GetNumPoints and f:GetNumPoints() or 0) do points[i] = { f:GetPoint(i) } end
+            tucked = { alpha = f:GetAlpha(), points = points }
+        end
+        if not parkHooked and hooksecurefunc and UpdateUIPanelPositions then
+            parkHooked = true
+            -- the game lays its windows out again now and then: keep it parked while tucked
+            hooksecurefunc("UpdateUIPanelPositions", function()
+                local pf = Blizzard()
+                if tucked and pf and pf:IsShown() then Park(pf) end
+            end)
+        end
         f:SetAlpha(0)
-        f:SetScale(0.01)
+        Park(f)
     elseif tucked then
-        f:SetScale(tucked.scale or 1)
-        f:SetAlpha(tucked.alpha or 1)
+        local t = tucked
         tucked = nil
+        f:ClearAllPoints()
+        for _, pt in ipairs(t.points or {}) do
+            if pt[1] then f:SetPoint(pt[1], pt[2] or UIParent, pt[3] or pt[1], pt[4] or 0, pt[5] or 0) end
+        end
+        if #(t.points or {}) == 0 and UpdateUIPanelPositions then pcall(UpdateUIPanelPositions, f) end
+        f:SetAlpha(t.alpha or 1)
     end
+    -- (an earlier version shrank it instead: undo that if this session still has it)
+    if f.GetScale and f:GetScale() < 0.05 then f:SetScale(1) end
 end
 
 -------------------------------------------------------------------------------
@@ -97,14 +204,15 @@ local function CanMake(r)
 end
 
 local function ReadRecipes()
-    recipes, byID = {}, {}
+    recipes, byID, byOut, byName = {}, {}, {}, {}
     local t = T()
     if not (t and t.GetAllRecipeIDs and t.GetRecipeInfo) then return end
     local cats = {}
     for _, rid in ipairs(t.GetAllRecipeIDs() or {}) do
         local ok, info = pcall(t.GetRecipeInfo, rid)
         if ok and info and info.learned and info.name then
-            local r = { id = rid, name = info.name, icon = info.icon, diff = info.relativeDifficulty, reagents = {}, per = 1 }
+            local r = { id = rid, name = info.name, icon = info.icon, diff = info.relativeDifficulty,
+                ups = info.numSkillUps, reagents = {}, per = 1 }
             local ok2, sch = pcall(t.GetRecipeSchematic, rid, false)
             if ok2 and sch then
                 r.out = sch.outputItemID
@@ -131,6 +239,8 @@ local function ReadRecipes()
             r.catOrder = cat and cat.order or 0
             recipes[#recipes + 1] = r
             byID[rid] = r
+            byName[r.name] = r
+            if r.out and not byOut[r.out] then byOut[r.out] = r end
         end
     end
     table.sort(recipes, function(a, b)
@@ -142,20 +252,65 @@ local function ReadRecipes()
     end)
 end
 
+-- What a recipe needs besides its materials (an anvil, a forge, a tool) and
+-- you don't have here: { "Anvil", ... }, or nil when nothing is missing. The
+-- game says so per recipe; where a client can't, the game's own error from the
+-- last Make on it is used instead (kept a little while).
+local makeError = {}   -- [recipe id] = { text, at }
+local lastMake         -- { id, at }
+local function Missing(r)
+    local t = T()
+    if t and t.GetRecipeRequirements then
+        local ok, list = pcall(t.GetRecipeRequirements, r.id)
+        if ok and type(list) == "table" then
+            local out
+            for _, need in ipairs(list) do
+                if type(need) == "table" and need.met == false and need.name then
+                    out = out or {}
+                    out[#out + 1] = need.name
+                end
+            end
+            return out
+        end
+    end
+    local e = makeError[r.id]
+    if e and (GetTime() - e.at) < 30 then return { e.text } end
+end
+
+local function MissingText(miss)
+    return miss and ("Needs " .. table.concat(miss, ", ") .. " nearby") or nil
+end
+
 local function ListItems()
     local needle = win and win.search:Needle() or ""
-    local items, lastCat = {}, nil
+    local shown = {}
     for _, r in ipairs(recipes) do
         local can = CanMake(r)
         local show = needle == "" or r.name:lower():find(needle, 1, true) ~= nil
         if show and db.canMake and can < 1 then show = false end
         if show and db.skillUps and r.diff == 3 then show = false end
-        if show then
-            if r.cat ~= lastCat then
-                lastCat = r.cat
-                items[#items + 1] = { head = r.cat }
+        if show then shown[#shown + 1] = { r = r, can = can } end
+    end
+    local items = {}
+    if db.sort then
+        -- by the profit of one craft; what has no price goes last
+        for _, e in ipairs(shown) do e.profit = RecipeProfit(e.r) end
+        table.sort(shown, function(a, b)
+            local pa, pb = a.profit, b.profit
+            if (pa == nil) ~= (pb == nil) then return pa ~= nil end
+            if pa == nil or pa == pb then return a.r.name < b.r.name end
+            if db.sort == "asc" then return pa < pb end
+            return pa > pb
+        end)
+        items = shown
+    else
+        local lastCat
+        for _, e in ipairs(shown) do
+            if e.r.cat ~= lastCat then
+                lastCat = e.r.cat
+                items[#items + 1] = { head = e.r.cat }
             end
-            items[#items + 1] = { r = r, can = can }
+            items[#items + 1] = e
         end
     end
     if #items == 0 then
@@ -243,6 +398,16 @@ local function RecipeCost(r)
     c = { cost = priced > 0 and total or nil, unpriced = unpriced }
     costCache[r.id] = c
     return c.cost, c.unpriced
+end
+
+-- The profit of one craft: what it makes sells for, less its materials. nil
+-- when either side has no price.
+function RecipeProfit(r)
+    local cost, unpriced = RecipeCost(r)
+    if not cost or (unpriced or 0) > 0 or not r.out then return nil end
+    local worth = JQ.CostToBuy and JQ.CostToBuy(r.out, r.per)
+    if not worth then return nil end
+    return worth - cost
 end
 
 -- The gold lines under a recipe: everything for N crafts, what's still to
@@ -337,6 +502,8 @@ local function RefreshDetail()
         d.name:SetText("Pick a recipe")
         d.sub:SetText("")
         d.summary:SetText("")
+        d.req:SetText("")
+        for _, g in ipairs(d.gold) do g:SetText("") end
         for _, row in ipairs(d.rows) do row:Hide() end
         d.make:SetEnabledLook(false); d.makeAll:SetEnabledLook(false); d.plan:SetEnabledLook(false)
         return
@@ -347,10 +514,14 @@ local function RefreshDetail()
     d.icon.itemID = r.out
     d.icon.tex:SetTexture(r.icon or (r.out and UI.ItemIcon(r.out)) or 134400)
     d.icon:Show()
-    local c = DIFF[r.diff or -1]
     d.name:SetText(r.name)
-    if c then d.name:SetTextColor(c[1], c[2], c[3]) else d.name:SetTextColor(1, 1, 1) end
-    d.sub:SetText(("Makes %d each  •  you can make |cff%s%d|r now"):format(r.per, can > 0 and "59d959" or "ff7070", can))
+    d.name:SetTextColor(1, 1, 1)
+    local dc = DIFF[r.diff or -1]
+    d.sub:SetText(("Makes %d each  •  you can make |cff%s%d|r now%s"):format(r.per, can > 0 and "59d959" or "ff7070", can,
+        (dc and SKILL_WORD[r.diff]) and ("  •  skill-up chance |cff%02x%02x%02x%s|r"):format(dc[1] * 255, dc[2] * 255, dc[3] * 255, SKILL_WORD[r.diff]) or ""))
+    local miss = Missing(r)
+    win.missKey = table.concat(miss or {}, ",")   -- (the tick redraws when this changes)
+    d.req:SetText(miss and ("|cffff5a4a%s: you can't make it here.|r"):format(MissingText(miss)) or "")
 
     local rows, request, tot = {}, {}, { request = 0, vendor = 0, still = 0 }
     if R and #r.reagents > 0 then rows, request, tot = R.Breakdown(ReagentList(r), n) end
@@ -361,7 +532,7 @@ local function RefreshDetail()
             local name, q = UI.ItemNameQuality(e.id)
             row.itemID = e.id
             row.icon:ClearAllPoints()
-            row.icon:SetPoint("LEFT", e.depth * 16, 0)
+            row.icon:SetPoint("TOPLEFT", e.depth * 18, -5)
             row.icon:SetTexture(UI.ItemIcon(e.id))
             row.name:SetText(name)
             row.name:SetTextColor(UI.QualityColor(q))
@@ -372,12 +543,13 @@ local function RefreshDetail()
             elseif e.kind == "ok" and inBags < e.need then
                 tag = "|cffffd25ayour bank / mail|r"
             end
-            row.tag:SetText(tag)
             row.need = e.need
             local cost, how = BestCost(e.id, e.need, 0, {})
-            row.cost:SetText((how == "vendor" and "|cff9e9ea8vendor|r")
-                or (cost and ((how == "make" and "|cffffd25amake|r " or "") .. Gold(cost)))
-                or "|cff9e9ea8no price|r")
+            local price = (how == "vendor" and "|cff9e9ea8vendor|r")
+                or (cost and ((how == "make" and "|cffffd25acheaper made:|r " or "") .. Gold(cost)))
+                or "|cff9e9ea8no price|r"
+            -- second line: where it comes from, and what the lot costs
+            row.info:SetText((tag ~= "" and (tag .. "   ") or "") .. price)
             row.nums:SetText(("%d   |cff%s%d|r   %d"):format(e.need, e.have >= e.need and "59d959" or "ff7070", e.have, e.alts))
             row:Show()
         else
@@ -393,24 +565,87 @@ local function RefreshDetail()
     if tot.request - tot.still > 0 then parts[#parts + 1] = ("%d to ask your alts for."):format(tot.request - tot.still) end
     if tot.still > 0 then parts[#parts + 1] = ("|cffff7070%d on no alt: to buy.|r"):format(tot.still) end
     if tot.vendor > 0 then parts[#parts + 1] = ("|cff9e9ea8%d from a vendor.|r"):format(tot.vendor) end
-    if #parts == 0 and #rows > 0 then parts[1] = can >= n and "|cff59d959Everything is in your bags.|r" or "" end
-    if #rows > #d.rows then parts[#parts + 1] = ("(%d more rows: make the window taller)"):format(#rows - #d.rows) end
-    local text = table.concat(parts, "  ")
-    if R and #r.reagents > 0 then
-        local gold = table.concat(CostLines(r, n, rows), "\n")
-        text = gold .. (text ~= "" and ("\n" .. text) or "")
+    if #parts == 0 and #rows > 0 then
+        parts[1] = can >= n and (miss and "Every material is in your bags." or "|cff59d959Everything is in your bags.|r") or ""
     end
-    d.summary:SetText(text)
+    if #rows > #d.rows then parts[#parts + 1] = ("(%d more rows: make the window taller)"):format(#rows - #d.rows) end
+    d.summary:SetText(table.concat(parts, "  "))
+    -- gold: one line each (a wrapped text misplaces the coin icons)
+    local gold = (R and #r.reagents > 0) and CostLines(r, n, rows) or {}
+    for i, g in ipairs(d.gold) do g:SetText(gold[i] or "") end
 
     d.make.text:SetText(("Make %d"):format(math.min(n, math.max(can, 1))))
-    d.make:SetEnabledLook(can > 0)
+    d.make:SetEnabledLook(can > 0 and not miss)
     d.makeAll.text:SetText(can > 0 and ("Make all (%d)"):format(can) or "Make all")
-    d.makeAll:SetEnabledLook(can > 0)
+    d.makeAll:SetEnabledLook(can > 0 and not miss)
+    d.missing = miss
     d.plan:SetEnabledLook(#r.reagents > 0 and R ~= nil)
+end
+
+-------------------------------------------------------------------------------
+--  Crafting. The game's own Create button is used wherever it can be: the
+--  recipe is picked in the game's (hidden) window as you pick it here, the
+--  count is put in its box, and its Create button is pressed - exactly what a
+--  click on it would do. Only if that's not possible is the craft asked for
+--  directly. Either way, if no craft has started a moment later, chat says so.
+-------------------------------------------------------------------------------
+local craftWatch   -- { name, at } while waiting for the craft's cast to begin
+
+-- The recipe the game's own window shows.
+local function GameFormRecipe()
+    local f = Blizzard()
+    local form = f and f.CraftingPage and f.CraftingPage.SchematicForm
+    if not (form and form.GetRecipeInfo) then return nil end
+    local ok, info = pcall(form.GetRecipeInfo, form)
+    return ok and info and info.recipeID or nil
+end
+
+-- Pick a recipe in the game's window too, so its Create button makes this one.
+local function PickInGame(rid)
+    local t = T()
+    if rid and t and t.OpenRecipe and GameFormRecipe() ~= rid and not InCombatLockdown() then
+        pcall(t.OpenRecipe, rid)
+    end
+end
+
+-- Make n of a recipe (a click must have led here). Returns true when a craft was asked for.
+local function CraftNow(rid, n, name)
+    n = math.max(1, math.floor(n or 1))
+    local f = Blizzard()
+    local page = f and f.CraftingPage
+    local asked = false
+    if page and GameFormRecipe() == rid then
+        local box = page.CreateMultipleInputBox
+        if box and box.SetValue then pcall(box.SetValue, box, n) end
+        local btn = (n > 1 and page.CreateAllButton and box == nil) and page.CreateAllButton or page.CreateButton
+        if btn and btn.IsEnabled and btn:IsEnabled() and btn.Click then
+            btn:Click()
+            asked = true
+        end
+    end
+    if not asked then
+        local t = T()
+        if t and t.CraftRecipe then
+            t.CraftRecipe(rid, n)
+            asked = true
+        end
+    end
+    if asked then
+        local at = GetTime()
+        craftWatch = { name = name or "it", at = at }
+        C_Timer.After(1.5, function()
+            if craftWatch and craftWatch.at == at then
+                craftWatch = nil
+                JQ.Print(("The game didn't start making %s. If Classic view's Create button works for it, this window has a bug: please say so."):format(name or "it"))
+            end
+        end)
+    end
+    return asked
 end
 
 local function Select(id)
     selected = id
+    JQ.Try("professions window: pick in the game's window", PickInGame, id)
     if win and win:IsShown() then
         win.list:Render()
         RefreshDetail()
@@ -423,7 +658,10 @@ local function Make(all)
     if not (r and t and t.CraftRecipe) or InCombatLockdown() then return end
     local can = CanMake(r)
     if can < 1 then JQ.Print(("You can't make %s yet: the materials aren't in your bags."):format(r.name)) return end
-    t.CraftRecipe(r.id, all and can or math.min(Crafts(), can))
+    local miss = Missing(r)
+    if miss then JQ.Print(("You can't make %s here: %s."):format(r.name, MissingText(miss):lower())) return end
+    lastMake = { id = r.id, at = GetTime() }
+    CraftNow(r.id, all and can or math.min(Crafts(), can), r.name)
 end
 
 local function Plan()
@@ -445,6 +683,12 @@ local function RefreshHeader()
         info = ok and v or nil
     end
     local name = info and info.professionName
+    if info and info.professionID and info.professionName and info.professionName ~= "" then
+        -- what this client calls this profession's window, learned as it is open
+        db.lines = db.lines or {}
+        db.lines[info.professionName] = info.professionID
+        db.lastLine = info.professionID
+    end
     local r, g, b = UI.Accent()
     local title = name and name ~= "" and name or "Professions"
     if info and info.skillLevel and info.maxSkillLevel and info.maxSkillLevel > 0 then
@@ -469,16 +713,30 @@ local function RefreshHeader()
                 bt = UI.Button(win, "", 100, 20)
                 bt:SetScript("OnClick", function(self)
                     local tt = T()
+                    self.line = LineFor(self.prof) or self.line
+                    Dbg("header button %s: OpenTradeSkill(%s)", tostring(self.prof), tostring(self.line))
                     if tt and tt.OpenTradeSkill and not InCombatLockdown() then pcall(tt.OpenTradeSkill, self.line) end
+                    -- say so when the game didn't switch
+                    local want = self.prof
+                    C_Timer.After(0.6, function()
+                        local now = ProfessionInfo()
+                        local name = now and now.professionName
+                        Dbg("  0.6s later the game shows: %s", tostring(name))
+                        if name and name ~= want and not (want == "Mining" and name == "Smelting") then
+                            JQ.Print(("The game didn't open %s from here. Open it from your spellbook once; after that this button knows it."):format(want == "Mining" and "Smelting" or want))
+                        end
+                    end)
                 end)
                 win.profs[i] = bt
             end
-            bt.line = LINES[prof]
+            bt.line = LineFor(prof)
+            bt.prof = prof
             bt.text:SetText(prof == "Mining" and "Smelting" or prof)
             bt:SetWidth(math.max(70, bt.text:GetStringWidth() + 22))
             bt:ClearAllPoints()
             if prev then bt:SetPoint("LEFT", prev, "RIGHT", 4, 0) else bt:SetPoint("TOPLEFT", win, "TOPLEFT", 12, -30) end
-            bt:SetOn(info and info.professionID == bt.line)
+            bt:SetOn(info and (info.professionID == bt.line or info.professionName == prof
+                or (prof == "Mining" and info.professionName == "Smelting")))
             bt:Show()
             prev = bt
         elseif bt then
@@ -492,34 +750,326 @@ end
 -------------------------------------------------------------------------------
 local function MiniGuide() return _G.MastercraftMiniGuide end
 
-local function ToggleGuide()
-    local button = _G.MastercraftProfessionButton
-    if not button then
-        JQ.Print("Mastercraft's mini guide isn't ready yet: it appears a moment after a profession opens.")
-        return
+-- Mastercraft is installed and loaded (its button and mini guide only exist a moment after a profession opens).
+local function HasMastercraft()
+    if _G.MastercraftProfessionButton or _G.MastercraftMiniGuide then return true end
+    local loaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+    if loaded then
+        local ok, yes = pcall(loaded, "Mastercraft")
+        return ok and yes and true or false
     end
-    local mg = MiniGuide()
-    db.guide = not (mg and mg:IsShown())
-    button:Click("RightButton")   -- Mastercraft's own "mini guide" click
+    return false
 end
 
--- Keep the mini guide in its place in this window while both are open.
+-- Mastercraft's own click for its mini guide (right-click on its profession button).
+local function ClickGuide()
+    local button = _G.MastercraftProfessionButton
+    if button then button:Click("RightButton") end
+    return button ~= nil
+end
+
+local function HideGuide()
+    local mg = MiniGuide()
+    if mg and mg:IsShown() and mg.jqDocked then mg:Hide() end
+    if mg then mg.jqDocked = nil end
+end
+
+-- Keep Mastercraft's own panel in its place in this window, when that's what the Guide tab shows.
 local function DockGuide()
     local mg = MiniGuide()
     local host = win and win.guideHost
-    if not (mg and host and mg:IsShown() and win:IsShown()) then return end
+    if not (mg and host and mg:IsShown() and win:IsShown() and db.tab == "guide" and db.theirGuide) then return end
     local _, rel = mg:GetPoint(1)
     if rel ~= host then
         mg:ClearAllPoints()
-        mg:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
+        mg:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -26)
     end
     mg.jqDocked = true
 end
 
 -------------------------------------------------------------------------------
+--  The guide step as an order of work. Mastercraft's mini guide keeps the
+--  guide it shows on its frame (.guide: steps with min / max skill, title,
+--  count and materials). The step you are on is worked out from your skill;
+--  its recipe and what that needs come from the open profession. Anything it
+--  needs that you can make yourself is a sub-craft: those come first, numbered,
+--  each with what you have and how many to make, and the main craft is last.
+-------------------------------------------------------------------------------
+local guideTried = 0
+
+function ProfessionInfo()
+    local t = T()
+    if t and t.GetBaseProfessionInfo then
+        local ok, info = pcall(t.GetBaseProfessionInfo)
+        if ok and type(info) == "table" then return info end
+    end
+end
+
+-- Mastercraft's guide for the open profession, read off its mini guide (made to show once, then put away).
+local function GuideData()
+    local mg = MiniGuide()
+    local g = mg and mg.guide
+    if type(g) == "table" and type(g.steps) == "table" then return g end
+end
+
+local function EnsureGuide()
+    local info = ProfessionInfo()
+    local g = GuideData()
+    local prof = info and info.professionName
+    local fits = g and (not prof or not g.name or g.name == prof or (g.name == "Mining" and prof == "Smelting"))
+    if fits then return g end
+    -- ask Mastercraft for it (a moment apart: its button appears just after the profession opens)
+    local now = GetTime and GetTime() or 0
+    if now - guideTried < 1 then return nil end
+    guideTried = now
+    local mg = MiniGuide()
+    if mg and mg:IsShown() then mg:Hide() end
+    if ClickGuide() then
+        mg = MiniGuide()
+        if mg and mg:IsShown() and not db.theirGuide then mg:Hide() end
+    end
+    return GuideData()
+end
+
+-- The guide steps you skipped in this window, for this character and profession.
+-- (Mastercraft keeps its own Skip ticks to itself: these are separate.)
+local function Skipped(g, create)
+    local me = JQ.Alts and JQ.Alts.MyName()
+    if not (me and g) then return {} end
+    local key = me .. "|" .. tostring(g.name or g.key or "?")
+    db.skip = db.skip or {}
+    if not db.skip[key] and create then db.skip[key] = {} end
+    return db.skip[key] or {}
+end
+
+-- The first step your skill hasn't passed and you haven't skipped, the one after it, and how many crafts it is about.
+local function GuideStep(g, skill, skipped)
+    skipped = skipped or {}
+    local step, nextStep
+    for _, st in ipairs(g.steps) do
+        if type(st) == "table" and not st.special and st.max and st.min and not skipped[tostring(st.title)] then
+            if not step then
+                if skill < st.max then step = st end
+            else
+                nextStep = st
+                break
+            end
+        end
+    end
+    if not step then return nil end
+    local from = math.max(skill, step.min)
+    local count = step.count or 1
+    local crafts = skill >= step.max and count
+        or math.max(1, math.ceil(count * (step.max - from) / math.max(1, step.max - step.min)))
+    return step, nextStep, crafts
+end
+
+-- { {id, need, have, make, recipe | other}, ..., {main = true, recipe, need} }: what to make, in order.
+local function WorkOrder(main, crafts)
+    local R = JQ.Requests
+    local me = JQ.Alts.MyName()
+    local bags, bank, mail = R.Holdings(me)
+    local order, seen = {}, {}
+    local function add(id, qty, depth)
+        if seen[id] then
+            seen[id].need = seen[id].need + qty
+            seen[id].make = math.max(0, seen[id].need - seen[id].have)
+            return
+        end
+        local sub = byOut[id]                    -- made in the open profession
+        local per, list, other = nil, nil, false
+        if sub then
+            per, list = sub.per, sub.reagents
+        else
+            local rec, can = R.MakeRecipe(id, me)   -- or by another profession of yours (bars from ore)
+            if rec and can and rec.r then
+                per, list, other = rec.n or 1, {}, true
+                for rid, q in pairs(rec.r) do list[#list + 1] = { id = rid, per = q } end
+            end
+        end
+        if not per then return end
+        local have = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0)
+        local e = { id = id, need = qty, have = have, make = math.max(0, qty - have), recipe = sub, other = other, per = per }
+        if e.make > 0 and depth < 3 then
+            local n = math.ceil(e.make / math.max(1, per))
+            for _, g in ipairs(list) do add(g.id, g.per * n, depth + 1) end   -- what it needs comes before it
+        end
+        seen[id] = e
+        order[#order + 1] = e
+    end
+    for _, g in ipairs(main.reagents) do add(g.id, g.per * crafts, 1) end
+    order[#order + 1] = { main = true, recipe = main, need = crafts }
+    return order
+end
+
+local function MakeOrderEntry(e)
+    local t = T()
+    if InCombatLockdown() or not e then return end
+    if e.main or e.recipe then
+        local r = e.recipe
+        local can = CanMake(r)
+        if can < 1 then
+            JQ.Print(("You can't make %s yet: the materials aren't in your bags."):format(r.name))
+            return
+        end
+        local miss = Missing(r)
+        if miss then
+            JQ.Print(("You can't make %s here: %s."):format(r.name, MissingText(miss):lower()))
+            return
+        end
+        lastMake = { id = r.id, at = GetTime() }
+        local want = e.main and e.need or math.ceil(e.make / math.max(1, r.per))
+        PickInGame(r.id)
+        CraftNow(r.id, math.max(1, math.min(want, can)), r.name)
+    elseif JQ.Requests.MakeNow then
+        JQ.Requests.MakeNow(e.id, e.make)   -- another profession's: it opens that one
+    end
+end
+
+local function RefreshGuide()
+    local card = win and win.guideCard
+    if not card or db.tab ~= "guide" then return end
+    win.theirBtn.text:SetText(db.theirGuide and "Back to the work order" or "Mastercraft's own panel")
+    if db.theirGuide then
+        card:Hide()
+        local mg = MiniGuide()
+        if not (mg and mg:IsShown()) then ClickGuide() end
+        return
+    end
+    card:Show()
+    local mg = MiniGuide()
+    if mg and mg:IsShown() and mg.jqDocked then mg:Hide() end
+    for _, row in ipairs(card.rows) do row:Hide() end
+    card.planBtn:Hide()
+    card.skipBtn:Hide()
+    card.unskipBtn:Hide()
+    card.learnBtn:Hide()
+    local g = EnsureGuide()
+    local info = ProfessionInfo()
+    local skill = info and info.skillLevel or 0
+    card.waiting = not g   -- (the window's tick tries again)
+    if not g then
+        card.head:SetText("")
+        card.title:SetText("Fetching Mastercraft's guide...")
+        card.sub:SetText(_G.MastercraftProfessionButton and "Asking Mastercraft for this profession's guide."
+            or "Waiting for Mastercraft: its button appears a moment after the profession opens. If this stays, Mastercraft has no guide for this profession.")
+        card.hint:SetText("")
+        card.next:SetText("")
+        return
+    end
+    local skipped = Skipped(g)
+    local nSkipped = 0
+    for _ in pairs(skipped) do nSkipped = nSkipped + 1 end
+    card.guide = g
+    if nSkipped > 0 then
+        card.unskipBtn.text:SetText(("Undo skips (%d)"):format(nSkipped))
+        card.unskipBtn:Show()
+    end
+    local step, nextStep, crafts = GuideStep(g, skill, skipped)
+    if step then
+        card.skipBtn.title = tostring(step.title)
+        card.skipBtn:Show()
+    end
+    if not step then
+        card.head:SetText("")
+        card.title:SetText(nSkipped > 0 and "No step left" or "Guide complete")
+        card.sub:SetText(nSkipped > 0 and ("You skipped the rest (%d). Undo skips to see them again."):format(nSkipped)
+            or ("Every step is done: you're at %d."):format(skill))
+        card.hint:SetText("")
+        card.next:SetText("")
+        return
+    end
+    card.head:SetText(("|cff%sNOW|r  |cff9e9ea8skill %d - %d|r"):format(UI.AccentHex(), step.min, step.max))
+    local main = step.title and byName[step.title]
+    if not main then
+        card.title:SetText(tostring(step.title or "?"))
+        card.sub:SetText(step.mats and ("|cffff9a3cYou haven't learned this recipe yet.|r About %d crafts once you have. Learn from: %s."):format(crafts,
+            tostring(step.source or "a trainer"))
+            or "A gathering step: nothing to craft here.")
+        -- where: Mastercraft knows the trainers and has the way there (its guide page, with a waypoint)
+        card.learnBtn:SetShown(step.mats ~= nil and _G.MastercraftProfessionButton ~= nil)
+        card.hint:SetText(type(step.mats) == "string" and ("Needs each: " .. step.mats) or "")
+        card.next:SetText(nextStep and ("|cff9e9ea8Next: %d+  %s|r"):format(nextStep.min or 0, tostring(nextStep.title or "")) or "")
+        return
+    end
+    card.title:SetText(("%s  |cff9e9ea8x%d|r"):format(main.name, crafts))
+    local order = WorkOrder(main, crafts)
+    local subs = #order - 1
+    card.sub:SetText(subs > 0
+        and ("|cffffd25a%d sub-craft%s first|r, then the main craft. Work down the list:"):format(subs, subs == 1 and "" or "s")
+        or "Nothing to make first: straight to the main craft.")
+    card.hint:SetText("")
+    card.order = order
+    for i, row in ipairs(card.rows) do
+        local e = order[i]
+        if e then
+            row.entry = e
+            local r = e.recipe
+            if e.main then
+                local can = CanMake(r)
+                row.itemID = r.out
+                row.icon:SetTexture(r.icon or (r.out and UI.ItemIcon(r.out)) or 134400)
+                row.name:SetText(("%d. |cffffffff%d %s|r"):format(i, e.need, r.name))
+                local miss = Missing(r)
+                row.info:SetText(miss and ("|cff%sMAIN CRAFT|r   |cffff5a4a%s|r"):format(UI.AccentHex(), MissingText(miss))
+                    or ("|cff%sMAIN CRAFT|r   you can make |cff%s%d|r now"):format(UI.AccentHex(), can > 0 and "59d959" or "ff7070", can))
+                row.btn.text:SetText(("Make %d"):format(math.max(1, math.min(e.need, math.max(can, 1)))))
+                row.btn:SetEnabledLook(can > 0 and not miss)
+                row.btn:Show()
+                row.done:Hide()
+            else
+                row.itemID = e.id
+                row.icon:SetTexture(UI.ItemIcon(e.id))
+                row.name:SetText(("%d. |cffffffff%d %s|r"):format(i, e.need, (UI.ItemNameQuality(e.id))))
+                if e.make <= 0 then
+                    row.info:SetText(("|cffffd25aSUB-CRAFT|r   |cff59d959have %d: enough|r"):format(e.have))
+                    row.btn:Hide()
+                    row.done:Show()
+                else
+                    local can = r and CanMake(r) or nil
+                    local miss = r and Missing(r) or nil
+                    row.info:SetText(("|cffffd25aSUB-CRAFT|r   have %d   |cffffffffmake %d|r%s"):format(e.have, e.make,
+                        e.other and "   |cff9e9ea8(another profession)|r"
+                        or (miss and ("   |cffff5a4a" .. MissingText(miss) .. "|r"))
+                        or (can and can < 1 and "   |cffff7070mats not in bags|r") or ""))
+                    row.btn.text:SetText(("Make %d"):format(e.make))
+                    row.btn:SetEnabledLook(e.other or (can ~= nil and can > 0 and not miss))
+                    row.btn:Show()
+                    row.done:Hide()
+                end
+            end
+            row:Show()
+        end
+    end
+    if #order > #card.rows then card.hint:SetText(("(%d more: make the window taller)"):format(#order - #card.rows)) end
+    card.planBtn.label = (crafts > 1 and (crafts .. "x ") or "") .. main.name .. " (guide)"
+    card.planBtn.main, card.planBtn.crafts = main, crafts
+    card.planBtn:Show()
+    card.next:SetText(nextStep and ("|cff9e9ea8Next: %d+  %s|r"):format(nextStep.min or 0, tostring(nextStep.title or "")) or "")
+end
+
+-- The right column's tabs: Plan (the docked request plan) or Guide (the step as an order of work).
+local function SetTab(tab)
+    local hasMC = HasMastercraft()
+    if tab == "guide" and not hasMC then tab = "plan" end
+    db.tab = tab
+    win.tabPlan:SetOn(tab == "plan")
+    win.tabGuide:SetOn(tab == "guide")
+    win.tabGuide:SetShown(hasMC)
+    win.planHost:SetShown(tab == "plan")
+    win.guideHost:SetShown(tab == "guide")
+    if tab == "guide" then
+        win.planEmpty:Hide()
+        RefreshGuide()
+    else
+        HideGuide()
+    end
+end
+
+-------------------------------------------------------------------------------
 --  Window
 -------------------------------------------------------------------------------
-local LEFT_W, RIGHT_W = 350, 320
+local LEFT_W, RIGHT_W = 330, 320
 
 local function Refresh()
     pending = false
@@ -530,9 +1080,8 @@ local function Refresh()
     RefreshHeader()
     win.list:SetItems(ListItems(), true)
     RefreshDetail()
-    local hasMC = _G.MastercraftProfessionButton ~= nil or MiniGuide() ~= nil
-    win.guideBtn:SetShown(hasMC)
-    win.guideLabel:SetShown(hasMC)
+    win.tabGuide:SetShown(HasMastercraft())
+    JQ.Try("professions window: guide step", RefreshGuide)
 end
 
 local function Queue()
@@ -541,8 +1090,10 @@ local function Queue()
     C_Timer.After(0.15, function() JQ.Try("professions window", Refresh) end)
 end
 
+local SORT_LABEL = { desc = "Profit: high first", asc = "Profit: low first" }
+
 local function Chip(parent, label, key)
-    local b = UI.Button(parent, label, 90, 20)
+    local b = UI.Button(parent, label, 80, 20)
     b:SetScript("OnClick", function(self)
         db[key] = not db[key] or nil
         self:SetOn(db[key])
@@ -559,19 +1110,33 @@ local function Build()
 
     local classicBtn = UI.Button(win, "Classic view", 96, 20)
     classicBtn:SetPoint("TOPRIGHT", -34, -6)
+    win.bookBtn = UI.Button(win, "All professions", 110, 20)
+    win.bookBtn:SetPoint("TOPRIGHT", -34, -30)
+    win.bookBtn:SetScript("OnClick", function() JQ.Try("professions window: professions book", OpenBook) end)
     win.search = UI.SearchBox(win, "Search recipes", function() win.list:SetItems(ListItems()) end)
     win.search:SetWidth(220)
     win.search:SetPoint("RIGHT", classicBtn, "LEFT", -8, 0)
 
     -- left: recipes
     local left = UI.Panel(win)
+    win.left = left
     left:SetPoint("TOPLEFT", 10, -58)
-    left:SetPoint("BOTTOMLEFT", 10, 10)
+    left:SetPoint("BOTTOMLEFT", 10, 36)
     left:SetWidth(LEFT_W)
     win.chipCan = Chip(left, "Can make", "canMake")
     win.chipCan:SetPoint("TOPLEFT", 6, -6)
     win.chipUps = Chip(left, "Skill ups", "skillUps")
     win.chipUps:SetPoint("LEFT", win.chipCan, "RIGHT", 4, 0)
+    -- sorting: the game's order with its headings, or one list by the profit of a craft
+    win.sortBtn = UI.Button(left, SORT_LABEL[db.sort] or "Sort: game order", 130, 20)
+    win.sortBtn:SetPoint("LEFT", win.chipUps, "RIGHT", 4, 0)
+    win.sortBtn:SetOn(db.sort ~= nil)
+    win.sortBtn:SetScript("OnClick", function(self)
+        db.sort = (db.sort == nil and "desc") or (db.sort == "desc" and "asc") or nil
+        self.text:SetText(SORT_LABEL[db.sort] or "Sort: game order")
+        self:SetOn(db.sort ~= nil)
+        win.list:SetItems(ListItems())
+    end)
     win.list = UI.List(left, 24, function(L)
         local row = CreateFrame("Button", nil, L)
         row.sel = UI.Fill(row, 1, 1, 1, 0.10)
@@ -583,18 +1148,26 @@ local function Build()
         row.can = UI.Text(row, 11, 0.62, 0.62, 0.66, "RIGHT")
         row.can:SetPoint("RIGHT", -6, 0)
         row.can:SetWidth(34)
-        row.cost = UI.Text(row, 10, 0.8, 0.8, 0.82, "RIGHT")
+        row.cost = UI.Text(row, 10, 0.8, 0.8, 0.82, "RIGHT")   -- the profit of one craft
         row.cost:SetPoint("RIGHT", row.can, "LEFT", -4, 0)
         row.cost:SetWidth(84)
+        row.skill = row:CreateTexture(nil, "ARTWORK")          -- the game's skill-up chevrons
+        row.skill:SetSize(14, 14)
+        row.skill:SetPoint("RIGHT", row.cost, "LEFT", -4, 0)
+        row.skillText = UI.Text(row, 10, 1, 1, 1, "RIGHT")
+        row.skillText:SetPoint("RIGHT", row.cost, "LEFT", -4, 0)
+        row.skillText:SetWidth(26)
         row.name = UI.Text(row, 12)
         row.name:SetPoint("LEFT", 30, 0)
-        row.name:SetPoint("RIGHT", row.cost, "LEFT", -4, 0)
+        row.name:SetPoint("RIGHT", row.cost, "LEFT", -34, 0)
         row:SetScript("OnClick", function(self) if self.rid then Select(self.rid) end end)
         row:SetScript("OnEnter", function(self)
             local r = self.rid and byID[self.rid]
             if not (r and r.out) then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetItemByID(r.out)
+            local miss = Missing(r)
+            if miss then GameTooltip:AddLine("Can't make it here: " .. MissingText(miss):lower() .. ".", 1, 0.35, 0.3, true) end
             -- gold: what one craft costs in materials, and what it sells for
             local cost, unpriced = RecipeCost(r)
             if cost then
@@ -621,6 +1194,8 @@ local function Build()
             row.sel:Hide()
             row.can:SetText("")
             row.cost:SetText("")
+            row.skill:Hide()
+            row.skillText:SetText("")
             row.name:ClearAllPoints()
             row.name:SetPoint("LEFT", 6, 0)
             row.name:SetPoint("RIGHT", -6, 0)
@@ -635,44 +1210,199 @@ local function Build()
             row.sel:SetShown(r.id == selected)
             row.name:ClearAllPoints()
             row.name:SetPoint("LEFT", 30, 0)
-            row.name:SetPoint("RIGHT", row.cost, "LEFT", -4, 0)
+            row.name:SetPoint("RIGHT", row.cost, "LEFT", -34, 0)
             row.name:SetText(r.name)
-            local cost, unpriced = RecipeCost(r)
-            row.cost:SetText(cost and (Gold(cost) .. ((unpriced or 0) > 0 and "|cff9e9ea8+|r" or "")) or "")
+            row.name:SetTextColor(0.9, 0.9, 0.92)
+            -- profit of one craft: green when it pays, red when it costs
+            local profit = RecipeProfit(r)
+            if profit then
+                row.cost:SetText((profit >= 0 and "|cff59d959+" or "|cffff7070-") .. Gold(math.abs(profit)) .. "|r")
+            else
+                row.cost:SetText("")
+            end
+            -- skill-up chance: the game's chevrons (and how many points, when more than one)
+            local atlas = SKILL_ATLAS[r.diff or -1]
             local c = DIFF[r.diff or -1]
-            if c then row.name:SetTextColor(c[1], c[2], c[3]) else row.name:SetTextColor(0.9, 0.9, 0.92) end
+            local many = (type(r.ups) == "number" and r.ups > 1) and tostring(r.ups) or ""
+            if atlas and HasAtlas(atlas) then
+                row.skill:SetAtlas(atlas)
+                row.skill:Show()
+                row.skillText:ClearAllPoints()
+                row.skillText:SetPoint("RIGHT", row.skill, "LEFT", -1, 0)
+                row.skillText:SetText(many)
+            else
+                row.skill:Hide()
+                row.skillText:ClearAllPoints()
+                row.skillText:SetPoint("RIGHT", row.cost, "LEFT", -4, 0)
+                row.skillText:SetText((SKILL_TEXT[r.diff or -1] or "") .. many)
+            end
+            if c then row.skillText:SetTextColor(c[1], c[2], c[3]) end
             local can = CanMake(r)
-            row.can:SetText(can > 0 and ("|cff59d959" .. can .. "|r") or "")
+            -- the count is orange while something else it needs isn't here (an anvil, a forge)
+            row.can:SetText(can > 0 and ((Missing(r) and "|cffff9a3c" or "|cff59d959") .. can .. "|r") or "")
         end
     end)
     win.list:SetPoint("TOPLEFT", 4, -32)
     win.list:SetPoint("BOTTOMRIGHT", -4, 4)
 
-    -- right: the plan, and Mastercraft's mini guide under it
+    -- right: Plan | Guide
     local right = CreateFrame("Frame", nil, win)
+    win.right = right
     right:SetPoint("TOPRIGHT", -10, -58)
-    right:SetPoint("BOTTOMRIGHT", -10, 10)
+    right:SetPoint("BOTTOMRIGHT", -10, 36)
+    -- the bottom strip: the crafting progress bar, across the whole window
+    win.barHost = CreateFrame("Frame", nil, win)
+    win.barHost:SetPoint("BOTTOMLEFT", 10, 10)
+    win.barHost:SetPoint("BOTTOMRIGHT", -20, 10)
+    win.barHost:SetHeight(20)
     right:SetWidth(RIGHT_W)
-    win.planLabel = UI.Text(right, 12)
-    win.planLabel:SetPoint("TOPLEFT", 2, 0)
-    win.planLabel:SetText(("|cff%sYOUR PLAN|r"):format(UI.AccentHex()))
+    win.tabPlan = UI.Button(right, "Plan", 90, 20)
+    win.tabPlan:SetPoint("TOPLEFT", 0, 0)
+    win.tabPlan:SetScript("OnClick", function() JQ.Try("professions window: tab", SetTab, "plan") end)
+    win.tabGuide = UI.Button(right, "Mastercraft guide", 130, 20)
+    win.tabGuide:SetPoint("LEFT", win.tabPlan, "RIGHT", 4, 0)
+    win.tabGuide:SetScript("OnClick", function() JQ.Try("professions window: tab", SetTab, "guide") end)
     win.planHost = CreateFrame("Frame", nil, right)
-    win.planHost:SetPoint("TOPLEFT", 0, -18)
+    win.planHost:SetPoint("TOPLEFT", 0, -26)
     win.planHost:SetSize(RIGHT_W, 10)
     win.planEmpty = UI.Text(right, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
-    win.planEmpty:SetPoint("TOPLEFT", 2, -22)
+    win.planEmpty:SetPoint("TOPLEFT", 2, -32)
     win.planEmpty:SetPoint("RIGHT", -2, 0)
     win.planEmpty:SetWordWrap(true)
     win.planEmpty:SetText("Nothing planned. Pick a recipe and press Plan mats: what's in your bank, what your alts send, what to make and what to buy all show here.")
+    -- this character's plan can be dropped from here
+    win.clearBtn = UI.Button(right, "Clear plan", 90, 20)
+    win.clearBtn:SetPoint("TOPRIGHT", 0, 0)
+    win.clearBtn:SetScript("OnClick", function()
+        if JQ.Requests and JQ.Requests.Cancel then JQ.Requests.Cancel() end
+        RefreshDetail()
+    end)
+    win.clearBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Clear plan", 1, 1, 1)
+        GameTooltip:AddLine("Drops this character's whole plan: what it asked alts for, its bank run and what it was going to make. Nothing already sent is taken back.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    win.clearBtn:SetScript("OnLeave", UI.HideTip)
+    win.clearBtn:Hide()
     win.guideHost = CreateFrame("Frame", nil, right)
-    win.guideHost:SetSize(RIGHT_W, 262)
-    win.guideHost:SetPoint("BOTTOMLEFT", 0, 0)
-    win.guideLabel = UI.Text(right, 12)
-    win.guideLabel:SetPoint("BOTTOMLEFT", win.guideHost, "TOPLEFT", 2, 6)
-    win.guideLabel:SetText(("|cff%sMASTERCRAFT GUIDE|r"):format(UI.AccentHex()))
-    win.guideBtn = UI.Button(right, "Show / hide", 96, 18)
-    win.guideBtn:SetPoint("BOTTOMRIGHT", win.guideHost, "TOPRIGHT", 0, 4)
-    win.guideBtn:SetScript("OnClick", function() JQ.Try("professions window: mini guide", ToggleGuide) end)
+    win.guideHost:SetPoint("TOPLEFT", 0, -26)
+    win.guideHost:SetPoint("BOTTOMRIGHT", 0, 0)
+    -- the Guide tab: this step as an order of work, or Mastercraft's own panel
+    win.theirBtn = UI.Button(win.guideHost, "Mastercraft's own panel", 170, 18)
+    win.theirBtn:SetPoint("TOPRIGHT", 0, 0)
+    win.theirBtn:SetScript("OnClick", function()
+        db.theirGuide = not db.theirGuide or nil
+        if not db.theirGuide then HideGuide() end
+        JQ.Try("professions window: guide step", RefreshGuide)
+    end)
+    local card = UI.Panel(win.guideHost)
+    win.guideCard = card
+    card:SetPoint("TOPLEFT", 0, -24)
+    card:SetPoint("BOTTOMRIGHT", 0, 0)
+    card.head = UI.Text(card, 11)
+    card.head:SetPoint("TOPLEFT", 10, -10)
+    card.title = UI.Text(card, 15)
+    card.title:SetPoint("TOPLEFT", 10, -28)
+    card.title:SetPoint("RIGHT", -10, 0)
+    card.sub = UI.Text(card, 11, 0.86, 0.86, 0.88)
+    card.sub:SetPoint("TOPLEFT", 10, -50)
+    card.sub:SetPoint("RIGHT", -10, 0)
+    card.sub:SetWordWrap(true)
+    card.rows = {}
+    for i = 1, 9 do
+        local row = CreateFrame("Button", nil, card)
+        row:SetHeight(38)
+        row:SetPoint("TOPLEFT", 8, -86 - (i - 1) * 42)
+        row:SetPoint("RIGHT", -8, 0)
+        UI.Fill(row, 1, 1, 1, 0.04)
+        UI.Fill(row, 1, 1, 1, 0.05, "HIGHLIGHT")
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetSize(26, 26)
+        row.icon:SetPoint("LEFT", 6, 0)
+        row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        row.btn = UI.Button(row, "Make", 76, 22)
+        row.btn:SetPoint("RIGHT", -6, 0)
+        row.btn:SetScript("OnClick", function(self)
+            JQ.Try("professions window: guide make", MakeOrderEntry, self:GetParent().entry)
+        end)
+        -- another profession's sub-craft: the press opens that profession, the release makes it
+        row.btn:SetScript("OnMouseDown", function(self, button)
+            local e = self:GetParent().entry
+            if e and e.other and button == "LeftButton" and JQ.Requests and JQ.Requests.MakePrepare then
+                JQ.Try("professions window: guide make", JQ.Requests.MakePrepare, e.id)
+            end
+        end)
+        row.done = row:CreateTexture(nil, "OVERLAY")
+        row.done:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+        row.done:SetSize(18, 18)
+        row.done:SetPoint("RIGHT", -32, 0)
+        row.name = UI.Text(row, 12)
+        row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, 0)
+        row.name:SetPoint("RIGHT", row.btn, "LEFT", -6, 0)
+        row.info = UI.Text(row, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+        row.info:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -3)
+        row.info:SetPoint("RIGHT", row.btn, "LEFT", -6, 0)
+        row:SetScript("OnEnter", UI.ItemEnter)
+        row:SetScript("OnLeave", UI.HideTip)
+        row:SetScript("OnClick", UI.ItemClick)
+        card.rows[i] = row
+    end
+    card.hint = UI.Text(card, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+    card.hint:SetPoint("BOTTOMLEFT", 10, 52)
+    card.hint:SetPoint("RIGHT", -10, 0)
+    card.hint:SetWordWrap(true)
+    card.planBtn = UI.Button(card, "Plan mats for all of it", 170, 22)
+    card.planBtn:SetPoint("BOTTOMLEFT", 10, 26)
+    card.planBtn:SetScript("OnClick", function(self)
+        if self.main and JQ.Requests and JQ.Requests.PlanFor then
+            local list = {}
+            for _, g in ipairs(self.main.reagents) do list[#list + 1] = { id = g.id, per = g.per } end
+            JQ.Requests.PlanFor(self.label, list, self.crafts, self.main.name)
+            JQ.Try("professions window: tab", SetTab, "plan")
+        end
+    end)
+    -- skip the step shown (a recipe you won't make, mats you won't buy), and get skipped ones back
+    card.learnBtn = UI.Button(card, "Where to learn it", 150, 22)
+    card.learnBtn:SetPoint("TOPLEFT", card.sub, "BOTTOMLEFT", 0, -10)
+    card.learnBtn:SetScript("OnClick", function()
+        local b = _G.MastercraftProfessionButton
+        if b then b:Click("LeftButton") end   -- Mastercraft's guide page: its Learn from card lists the trainers and makes a waypoint
+    end)
+    card.learnBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Where to learn it", 1, 1, 1)
+        GameTooltip:AddLine("Opens Mastercraft's guide for this profession: its Learn from card names the trainers and can put a waypoint on the nearest.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    card.learnBtn:SetScript("OnLeave", UI.HideTip)
+    card.learnBtn:Hide()
+    card.skipBtn = UI.Button(card, "Skip step", 80, 22)
+    card.skipBtn:SetPoint("LEFT", card.planBtn, "RIGHT", 6, 0)
+    card.skipBtn:SetPoint("BOTTOM", card, "BOTTOM", 0, 26)
+    card.skipBtn:SetScript("OnClick", function(self)
+        if not (self.title and card.guide) then return end
+        Skipped(card.guide, true)[self.title] = true
+        JQ.Try("professions window: guide step", RefreshGuide)
+    end)
+    card.skipBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Skip this step", 1, 1, 1)
+        GameTooltip:AddLine("Moves on to the next step of the guide, for this character. Skips made here are JaseTools' own: Mastercraft's window keeps its own Skip ticks.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    card.skipBtn:SetScript("OnLeave", UI.HideTip)
+    card.unskipBtn = UI.Button(card, "Undo skips", 110, 18)
+    card.unskipBtn:SetPoint("BOTTOMRIGHT", -10, 6)
+    card.unskipBtn:SetScript("OnClick", function()
+        if not card.guide then return end
+        local me = JQ.Alts and JQ.Alts.MyName()
+        if me and db.skip then db.skip[me .. "|" .. tostring(card.guide.name or card.guide.key or "?")] = nil end
+        JQ.Try("professions window: guide step", RefreshGuide)
+    end)
+    card.next = UI.Text(card, 11)
+    card.next:SetPoint("BOTTOMLEFT", 10, 8)
+    card.next:SetPoint("RIGHT", card.unskipBtn, "LEFT", -6, 0)
 
     -- middle: the picked recipe
     local mid = UI.Panel(win)
@@ -695,12 +1425,16 @@ local function Build()
     d.sub = UI.Text(mid, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
     d.sub:SetPoint("TOPLEFT", d.name, "BOTTOMLEFT", 0, -6)
     d.sub:SetPoint("RIGHT", -12, 0)
+    -- what's missing besides materials (an anvil, a forge, a tool): red, under it
+    d.req = UI.Text(mid, 11, 1, 0.35, 0.3)
+    d.req:SetPoint("TOPLEFT", d.sub, "BOTTOMLEFT", 0, -3)
+    d.req:SetPoint("RIGHT", -12, 0)
 
     local countLabel = UI.Text(mid, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
     countLabel:SetPoint("TOPLEFT", 12, -70)
     countLabel:SetText("Crafts")
     win.count = CreateFrame("EditBox", nil, mid)
-    win.count:SetSize(50, 22)
+    win.count:SetSize(44, 22)
     win.count:SetPoint("LEFT", countLabel, "RIGHT", 8, 0)
     win.count:SetAutoFocus(false)
     win.count:SetNumeric(true)
@@ -713,14 +1447,30 @@ local function Build()
     win.count:SetScript("OnTextChanged", function() if win.detail.make then RefreshDetail() end end)
     win.count:SetScript("OnEnterPressed", win.count.ClearFocus)
     win.count:SetScript("OnEscapePressed", win.count.ClearFocus)
-    d.make = UI.Button(mid, "Make", 86, 22)
-    d.make:SetPoint("LEFT", win.count, "RIGHT", 10, 0)
+    d.make = UI.Button(mid, "Make", 72, 22)
+    d.make:SetPoint("LEFT", win.count, "RIGHT", 8, 0)
     d.make:SetScript("OnClick", function() JQ.Try("professions window: make", Make, false) end)
-    d.makeAll = UI.Button(mid, "Make all", 100, 22)
-    d.makeAll:SetPoint("LEFT", d.make, "RIGHT", 6, 0)
+    d.make:SetScript("OnEnter", function(self)
+        if not d.missing then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Can't make it here", 1, 0.35, 0.3)
+        GameTooltip:AddLine(MissingText(d.missing) .. ".", 0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    d.make:SetScript("OnLeave", UI.HideTip)
+    d.makeAll = UI.Button(mid, "Make all", 92, 22)
+    d.makeAll:SetPoint("LEFT", d.make, "RIGHT", 4, 0)
     d.makeAll:SetScript("OnClick", function() JQ.Try("professions window: make", Make, true) end)
-    d.plan = UI.Button(mid, "Plan mats", 96, 22)
-    d.plan:SetPoint("LEFT", d.makeAll, "RIGHT", 6, 0)
+    d.makeAll:SetScript("OnEnter", function(self)
+        if not d.missing then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Can't make it here", 1, 0.35, 0.3)
+        GameTooltip:AddLine(MissingText(d.missing) .. ".", 0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    d.makeAll:SetScript("OnLeave", UI.HideTip)
+    d.plan = UI.Button(mid, "Plan mats", 80, 22)
+    d.plan:SetPoint("LEFT", d.makeAll, "RIGHT", 4, 0)
     d.plan:SetScript("OnClick", function() JQ.Try("professions window: plan", Plan) end)
     d.plan:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -732,52 +1482,68 @@ local function Build()
 
     local head = UI.Text(mid, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3], "RIGHT")
     head:SetPoint("TOPRIGHT", -12, -104)
-    head:SetText("cost (all)          need   have   alts")
-    for i = 1, 14 do
+    head:SetText("need   have   alts")
+    -- two lines a material: its name, then where it comes from and what the lot costs
+    for i = 1, 11 do
         local row = CreateFrame("Button", nil, mid)
-        row:SetHeight(24)
-        row:SetPoint("TOPLEFT", 12, -120 - (i - 1) * 26)
+        row:SetHeight(34)
+        row:SetPoint("TOPLEFT", 12, -118 - (i - 1) * 36)
         row:SetPoint("RIGHT", -12, 0)
         UI.Fill(row, 1, 1, 1, 0.05, "HIGHLIGHT")
         row.icon = row:CreateTexture(nil, "ARTWORK")
-        row.icon:SetSize(20, 20)
+        row.icon:SetSize(24, 24)
         row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         row.nums = UI.Text(row, 11, 1, 1, 1, "RIGHT")
         row.nums:SetPoint("RIGHT")
         row.nums:SetWidth(104)
-        row.cost = UI.Text(row, 11, 1, 1, 1, "RIGHT")
-        row.cost:SetPoint("RIGHT", row.nums, "LEFT", -8, 0)
-        row.cost:SetWidth(96)
-        row.tag = UI.Text(row, 10, 1, 1, 1, "RIGHT")
-        row.tag:SetPoint("RIGHT", row.cost, "LEFT", -6, 0)
-        row.tag:SetWidth(84)
         row.name = UI.Text(row, 12)
-        row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-        row.name:SetPoint("RIGHT", row.tag, "LEFT", -4, 0)
+        row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 6, 1)
+        row.name:SetPoint("RIGHT", row.nums, "LEFT", -6, 0)
+        row.info = UI.Text(row, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+        row.info:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -2)
+        row.info:SetPoint("RIGHT", row.nums, "LEFT", -6, 0)
         row:SetScript("OnEnter", function(self) JQ.Try("professions window: material tooltip", RowEnter, self) end)
         row:SetScript("OnLeave", UI.HideTip)
         row:SetScript("OnClick", UI.ItemClick)
         d.rows[i] = row
     end
     d.summary = UI.Text(mid, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
-    d.summary:SetPoint("BOTTOMLEFT", 12, 10)
+    d.summary:SetPoint("BOTTOMLEFT", 12, 8)
     d.summary:SetPoint("RIGHT", -12, 0)
+    d.summary:SetHeight(28)
     d.summary:SetWordWrap(true)
-    d.summary:SetJustifyV("BOTTOM")
-    if d.summary.SetMaxLines then d.summary:SetMaxLines(6) end
+    d.summary:SetJustifyV("TOP")
+    if d.summary.SetMaxLines then d.summary:SetMaxLines(2) end
+    -- gold: three single lines above it
+    d.gold = {}
+    for i = 1, 3 do
+        local g = UI.Text(mid, 11, 0.86, 0.86, 0.88)
+        g:SetPoint("BOTTOMLEFT", 12, 40 + (3 - i) * 16)
+        g:SetPoint("RIGHT", -12, 0)
+        d.gold[i] = g
+    end
 
     classicBtn:SetScript("OnClick", function()
         classic = true
         Tuck(false)
         win:Hide()
+        JQ.Try("professions window: switch button", ShowSwitch)   -- the way back
     end)
 
     win:SetScript("OnShow", function()
         if JQ.Requests and JQ.Requests.Dock then JQ.Requests.Dock(win.planHost) end
+        if JQ.Requests and JQ.Requests.DockBar then
+            local docked = JQ.Requests.DockBar(win.barHost)
+            -- (with the bar switched off, the panels use the strip)
+            win.left:SetPoint("BOTTOMLEFT", 10, docked and 36 or 10)
+            win.right:SetPoint("BOTTOMRIGHT", -10, docked and 36 or 10)
+        end
+        JQ.Try("professions window: tab", SetTab, db.tab or "plan")
         Queue()
     end)
     win:SetScript("OnHide", function()
         if JQ.Requests and JQ.Requests.Undock then JQ.Requests.Undock() end
+        if JQ.Requests and JQ.Requests.DockBar then JQ.Requests.DockBar(nil) end
         local mg = MiniGuide()
         if mg and mg.jqDocked then
             mg.jqDocked = nil
@@ -794,10 +1560,33 @@ local function Build()
     local since = 0
     win:HookScript("OnUpdate", function(_, elapsed)
         since = since + elapsed
-        if since < 0.2 then return end
+        if since < 0.1 then return end
         since = 0
         JQ.Try("professions window: mini guide", DockGuide)
-        if JQ.Requests and JQ.Requests.PlanShown then win.planEmpty:SetShown(not JQ.Requests.PlanShown()) end
+        -- moving: 20%, so the window doesn't hide where you're going; whole when still or under the mouse
+        local moving = (GetUnitSpeed and (GetUnitSpeed("player") or 0) > 0) or (IsFalling and IsFalling()) or false
+        local want = (moving and not win:IsMouseOver()) and 0.2 or 1
+        if math.abs((win:GetAlpha() or 1) - want) > 0.01 then win:SetAlpha(want) end
+        -- walking up to (or away from) an anvil or forge changes what can be made here
+        local r = selected and byID[selected]
+        local key = r and table.concat(Missing(r) or {}, ",") or ""
+        if key ~= (win.missKey or "") then
+            win.missKey = key
+            JQ.Try("professions window: needs", function()
+                RefreshDetail()
+                win.list:Render()
+                if db.tab == "guide" then RefreshGuide() end
+            end)
+        end
+        if JQ.Requests and JQ.Requests.PlanShown then
+            win.planEmpty:SetShown(db.tab ~= "guide" and not JQ.Requests.PlanShown())
+        end
+        win.clearBtn:SetShown(db.tab ~= "guide" and JQ.Requests ~= nil and JQ.Requests.HasPlan ~= nil and JQ.Requests.HasPlan())
+        win.tabGuide:SetShown(HasMastercraft())
+        -- Mastercraft's guide wasn't there yet: ask again
+        if db.tab == "guide" and not db.theirGuide and win.guideCard.waiting then
+            JQ.Try("professions window: guide step", RefreshGuide)
+        end
     end)
 end
 
@@ -808,6 +1597,8 @@ end
 
 local function Open()
     local f = Blizzard()
+    Dbg("Open: wanted=%s classic=%s frame=%s shown=%s own=%s", tostring(Wanted()), tostring(classic),
+        tostring(f ~= nil), tostring(f and f:IsShown()), tostring(IsOwnProfession()))
     if not Wanted() or not (f and f:IsShown()) or not IsOwnProfession() then
         -- the game's window after all (someone else's profession, Classic view)
         if not (win and win:IsShown()) then Tuck(false) end
@@ -818,16 +1609,198 @@ local function Open()
     if JQ.Requests and JQ.Requests.HideSide then JQ.Requests.HideSide() end
     win:Show()
     Queue()
-    -- the mini guide, when you had it showing last time
-    if db.guide then
+    -- the Guide tab, when that's where you left it (Mastercraft's button appears a moment after)
+    if db.tab == "guide" then
         C_Timer.After(0.6, function()
-            local mg, button = MiniGuide(), _G.MastercraftProfessionButton
-            if win:IsShown() and button and not (mg and mg:IsShown()) then button:Click("RightButton") end
+            if win:IsShown() then JQ.Try("professions window: tab", SetTab, "guide") end
         end)
     end
 end
 
-local function Close()
+-- On the game's own profession window: a button to this one. It shows while
+-- the JaseTools window is switched off, and in Classic view; one click
+-- switches the window on (if it was off) and opens it.
+local switchBtn
+function ShowSwitch()
+    local f = Blizzard()
+    if not (f and f:IsShown()) or not JQ.IsEnabled("altRequest") then
+        if switchBtn then switchBtn:Hide() end
+        return
+    end
+    if not switchBtn then
+        switchBtn = UI.Button(f, "JaseTools view", 124, 22)
+        switchBtn:SetPoint("BOTTOMRIGHT", f, "TOPRIGHT", -8, 2)
+        switchBtn:SetScript("OnClick", function()
+            classic = false
+            if not JQ.IsEnabled(KEY) then
+                JQ.SetEnabled(KEY, true)   -- (switching it on opens it)
+            else
+                Open()
+            end
+            if switchBtn then switchBtn:SetShown(not (win and win:IsShown())) end
+        end)
+        switchBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText("JaseTools professions window", 1, 1, 1)
+            GameTooltip:AddLine("One window for recipes, materials, gold, your plan and the Mastercraft guide. Click to use it"
+                .. (JQ.IsEnabled(KEY) and "." or " from now on (it is switched off). Switch it off again in /jq > Professions, or use Classic view."),
+                0.8, 0.8, 0.8, true)
+            GameTooltip:Show()
+        end)
+        switchBtn:SetScript("OnLeave", UI.HideTip)
+    end
+    switchBtn:SetShown(IsOwnProfession() and (not JQ.IsEnabled(KEY) or classic) and not (win and win:IsShown()))
+end
+
+-------------------------------------------------------------------------------
+--  WoW Forever's all-professions book: opening it opens this window instead,
+--  on the profession you had open last (or your first crafting profession).
+--  With no crafting profession, or after "All professions", the book stays.
+-------------------------------------------------------------------------------
+local tradeOpen = false    -- a profession is open (between TRADE_SKILL_SHOW and its close)
+local allowBook = false   -- the book was asked for from this window: leave it open once
+local bookHooked = false
+
+local function FirstLine()
+    if db.lastLine then return db.lastLine end
+    local game = GameLines()
+    local names = {}
+    for prof in pairs(game) do
+        if LINES[prof] and prof ~= "Mining" then names[#names + 1] = prof end
+    end
+    table.sort(names)
+    if names[1] then return game[names[1]] end
+    local me = JQ.Alts and JQ.Alts.MyName()
+    local data = me and JQ.Alts.RealmTable()[me]
+    local names = {}
+    for prof in pairs(data and data.profs or {}) do
+        if LINES[prof] and prof ~= "Mining" then names[#names + 1] = prof end
+    end
+    table.sort(names)
+    if names[1] then return LINES[names[1]] end
+    return data and data.profs and data.profs.Mining and LINES.Mining or nil
+end
+
+local function BookShown(book)
+    Dbg("professions book: OnShow (allowBook=%s wanted=%s combat=%s)", tostring(allowBook), tostring(Wanted()), tostring(InCombatLockdown()))
+    if toggleHooked then return end   -- (the toggle hook does it)
+    if allowBook then allowBook = false return end
+    if not Wanted() or InCombatLockdown() then return end
+    local line = FirstLine()
+    local t = T()
+    if not (line and t and t.OpenTradeSkill) then return end   -- nothing to craft: the book is all there is
+    local ok, err = pcall(t.OpenTradeSkill, line)
+    Dbg("  book -> OpenTradeSkill(%s): %s %s", tostring(line), tostring(ok), tostring(err))
+    if not ok then return end
+    -- once the profession is up, the book goes
+    C_Timer.After(0, function()
+        local f = Blizzard()
+        if f and f:IsShown() and book:IsShown() and not InCombatLockdown() then
+            if HideUIPanel then pcall(HideUIPanel, book) else book:Hide() end
+        end
+    end)
+end
+
+local panelsHooked = false
+local function HookPanels()
+    if panelsHooked or not hooksecurefunc then return end
+    panelsHooked = true
+    local function name(f) return type(f) == "table" and f.GetName and f:GetName() or tostring(f) end
+    if ShowUIPanel then hooksecurefunc("ShowUIPanel", function(f) Dbg("ShowUIPanel %s", name(f)) end) end
+    if HideUIPanel then hooksecurefunc("HideUIPanel", function(f) Dbg("HideUIPanel %s", name(f)) end) end
+    for _, fn in ipairs({ "ToggleProfessionsBook", "ToggleSpellBook", "ProfessionsFrame_LoadUI", "ProfessionsBook_LoadUI" }) do
+        if type(_G[fn]) == "function" then hooksecurefunc(fn, function(...) Dbg("%s(%s)", fn, table.concat({ tostringall(...) }, ", ")) end) end
+    end
+end
+
+-- The book was toggled (K, the micro-menu button). When that opened it, and no
+-- profession is open yet, open the profession you used last instead.
+local function BookToggled()
+    local book = _G.ProfessionsBookFrame
+    local pf = Blizzard()
+    Dbg("book toggled: allowBook=%s wanted=%s combat=%s tradeOpen=%s book=%s profFrame=%s ours=%s", tostring(allowBook),
+        tostring(Wanted()), tostring(InCombatLockdown()), tostring(tradeOpen), tostring(book and book:IsShown()),
+        tostring(pf and pf:IsShown()), tostring(win and win:IsShown()))
+    if allowBook then allowBook = false return end
+    if not Wanted() or InCombatLockdown() or tradeOpen or (win and win:IsShown()) then return end
+    -- a toggle that closed it: nothing to do
+    local opened = (book and book:IsShown()) or (pf and pf:IsShown())
+    if not opened then return end
+    local line = FirstLine()
+    local t = T()
+    if not (line and t and t.OpenTradeSkill) then return end   -- nothing to craft: the book is all there is
+    local ok, err = pcall(t.OpenTradeSkill, line)
+    Dbg("  book -> OpenTradeSkill(%s): %s %s", tostring(line), tostring(ok), tostring(err))
+    if ok and book and book:IsShown() then
+        C_Timer.After(0, function()
+            if book:IsShown() and tradeOpen and not InCombatLockdown() then
+                if HideUIPanel then pcall(HideUIPanel, book) else book:Hide() end
+            end
+        end)
+    end
+end
+
+local toggleHooked = false
+local function HookToggle()
+    if toggleHooked or not (hooksecurefunc and type(_G.ToggleProfessionsBook) == "function") then return end
+    toggleHooked = true
+    hooksecurefunc("ToggleProfessionsBook", function() JQ.Try("professions window: professions book", BookToggled) end)
+end
+
+local function HookBook()
+    local book = _G.ProfessionsBookFrame
+    Dbg("HookBook: ProfessionsBookFrame %s, already hooked %s", book and "exists" or "missing", tostring(bookHooked))
+    if bookHooked or not book then return end
+    bookHooked = true
+    book:HookScript("OnShow", function(self) JQ.Try("professions window: professions book", BookShown, self) end)
+    book:HookScript("OnHide", function() Dbg("professions book: OnHide") end)
+end
+
+function OpenBook()
+    allowBook = true
+    if ToggleProfessionsBook then
+        pcall(ToggleProfessionsBook)
+    elseif _G.ProfessionsBookFrame and ShowUIPanel then
+        pcall(ShowUIPanel, _G.ProfessionsBookFrame)
+    else
+        allowBook = false
+        JQ.Print("The professions book isn't available.")
+    end
+end
+
+-- A profession has opened. The game's window can take a moment to appear
+-- (it is loaded on first use), and the game a moment to say whose profession
+-- it is: so this tries until our window is open or it is clear it shouldn't be.
+local blizzHooked = false
+local Close   -- forward
+
+local function TryOpen(n)
+    n = n or 1
+    local f = Blizzard()
+    Dbg("TryOpen #%d: tradeOpen=%s frame=%s shown=%s ours=%s", n, tostring(tradeOpen), tostring(f ~= nil),
+        tostring(f and f:IsShown()), tostring(win and win:IsShown()))
+    if f and not blizzHooked then
+        blizzHooked = true
+        f:HookScript("OnShow", function() Dbg("game's profession window: OnShow") end)
+        -- the game's window can close without the close event reaching us:
+        -- then Classic view would stick, and the next profession would open in the game's window
+        f:HookScript("OnHide", function()
+            Dbg("game's profession window: OnHide")
+            JQ.Try("professions window: closing", Close)
+        end)
+    end
+    if not tradeOpen then return end
+    if f and f:IsShown() then
+        if Wanted() then Tuck(true) end
+        Open()
+        ShowSwitch()
+    end
+    if (win and win:IsShown()) or not Wanted() or n >= 10 then return end
+    C_Timer.After(0.15, function() JQ.Try("professions window: opening", TryOpen, n + 1) end)
+end
+
+function Close()
+    tradeOpen = false
     classic = false
     if win and win:IsShown() then
         classic = true      -- (the profession is closing already: don't close it again)
@@ -838,13 +1811,50 @@ local function Close()
 end
 
 local ev = CreateFrame("Frame")
-ev:SetScript("OnEvent", function(_, event)
+ev:SetScript("OnEvent", function(_, event, ...)
+    if event == "ADDON_LOADED" then
+        local name = ...
+        if type(name) == "string" and name:find("Profession", 1, true) then Dbg("ADDON_LOADED %s", name) end
+        if name == "Blizzard_ProfessionsBook" then
+            JQ.Try("professions window: professions book", HookToggle)
+            JQ.Try("professions window: professions book", HookBook)
+        end
+        return
+    end
+    if event ~= "BAG_UPDATE_DELAYED" and event ~= "UNIT_SPELLCAST_START" and event ~= "UNIT_SPELLCAST_SUCCEEDED" then
+        Dbg("event %s", event)
+    end
+    if event == "TRADE_SKILL_SHOW" and db and db.debug then
+        local t = T()
+        local ok, info = pcall(function() return t and t.GetBaseProfessionInfo and t.GetBaseProfessionInfo() end)
+        Dbg("  base profession: %s id=%s skill=%s", tostring(ok and info and info.professionName), tostring(ok and info and info.professionID),
+            tostring(ok and info and info.skillLevel))
+        local list = {}
+        for name, line in pairs(GameLines()) do list[#list + 1] = name .. "=" .. line end
+        Dbg("  game's profession lines: %s", #list > 0 and table.concat(list, ", ") or "(none: GetProfessions not here)")
+        Dbg("  linked=%s guild=%s npc=%s", tostring(t and t.IsTradeSkillLinked and t.IsTradeSkillLinked()),
+            tostring(t and t.IsTradeSkillGuild and t.IsTradeSkillGuild()), tostring(t and t.IsNPCCrafting and t.IsNPCCrafting()))
+    end
+    if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED" then
+        if ... == "player" then craftWatch = nil end
+        return
+    end
+    if event == "UI_ERROR_MESSAGE" then
+        craftWatch = nil   -- (the game said why itself)
+        -- the game refused a Make of ours (no anvil, wrong place): say why on that recipe
+        local _, text = ...
+        if lastMake and type(text) == "string" and (GetTime() - lastMake.at) < 2 then
+            makeError[lastMake.id] = { text = text, at = GetTime() }
+            lastMake = nil
+            if win and win:IsShown() then Queue() end
+        end
+        return
+    end
     if event == "TRADE_SKILL_SHOW" then
         -- out of sight straight away (no flash of the game's window); a moment
         -- later the game can say whose profession it is, and this window opens
-        local f = Blizzard()
-        if Wanted() and f and f:IsShown() then Tuck(true) end
-        C_Timer.After(0.1, function() JQ.Try("professions window: opening", Open) end)
+        tradeOpen = true
+        JQ.Try("professions window: opening", TryOpen, 1)
     elseif event == "TRADE_SKILL_CLOSE" then
         JQ.Try("professions window: closing", Close)
     elseif win and win:IsShown() then
@@ -856,11 +1866,25 @@ JQ.byKey[KEY].onLoad = function()
     JaseQoLDB.profView = JaseQoLDB.profView or {}
     db = JaseQoLDB.profView
     for _, e in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_CLOSE", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_UPDATE",
-        "BAG_UPDATE_DELAYED", "NEW_RECIPE_LEARNED", "SKILL_LINES_CHANGED" }) do
+        "BAG_UPDATE_DELAYED", "NEW_RECIPE_LEARNED", "SKILL_LINES_CHANGED", "UI_ERROR_MESSAGE", "ADDON_LOADED", "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_SUCCEEDED" }) do
         pcall(ev.RegisterEvent, ev, e)
     end
+    if db.debug then JQ.Try("professions window: debug", HookPanels) end
+    JQ.Try("professions window: professions book", HookToggle)
+    JQ.Try("professions window: professions book", HookBook)   -- (already loaded)
     SLASH_JASEQOLPROF1 = "/jprof"
-    SlashCmdList.JASEQOLPROF = function()
+    SlashCmdList.JASEQOLPROF = function(msg)
+        msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+        if msg == "debug" then
+            db.debug = not db.debug or nil
+            if db.debug then
+                db.debugLog = {}
+                HookPanels()
+            end
+            JQ.Print(db.debug and "Professions debug log ON. Open your professions the usual way (and press make in the plan), then /reload so it's saved. /jprof debug again turns it off."
+                or ("Professions debug log off (%d lines kept until it's turned on again)."):format(#(db.debugLog or {})))
+            return
+        end
         if win and win:IsShown() then
             win:Hide()
         else
@@ -870,7 +1894,16 @@ JQ.byKey[KEY].onLoad = function()
         end
     end
 end
+JQ.byKey[KEY].onEnable = function()
+    -- a profession that's open right now gets the window straight away
+    classic = false
+    local f = Blizzard()
+    tradeOpen = f ~= nil and f:IsShown() and true or false
+    JQ.Try("professions window: opening", Open)
+    JQ.Try("professions window: switch button", ShowSwitch)
+end
 JQ.byKey[KEY].onDisable = function()
+    C_Timer.After(0, function() JQ.Try("professions window: switch button", ShowSwitch) end)
     if win and win:IsShown() then
         classic = true
         win:Hide()
@@ -879,9 +1912,21 @@ JQ.byKey[KEY].onDisable = function()
     Tuck(false)
 end
 
-JQ.ProfView = { Active = function() return win ~= nil and win:IsShown() end, Wanted = Wanted }
+JQ.ProfView = { Active = function() return win ~= nil and win:IsShown() end, Wanted = Wanted,
+    CraftNow = function(rid, n, name) PickInGame(rid); return CraftNow(rid, n, name) end,
+    LineFor = LineFor, Debug = Dbg,
+    -- show the recipe that makes an item (once its profession is open)
+    SelectOutput = function(itemID)
+        if not (win and win:IsShown()) then return false end
+        ReadRecipes()
+        local r = byOut[itemID]
+        if r then Select(r.id); win.list:SetItems(ListItems(), true) end
+        return r ~= nil
+    end,
+    Line = function(prof) return db and db.lines and db.lines[prof] end }
 
 -- for tests
-JQ._ProfView = { RecipeCost = RecipeCost, BestCost = BestCost, CostLines = CostLines, ReadRecipes = function() ReadRecipes(); return recipes end, ListItems = ListItems, CanMake = CanMake,
+JQ._ProfView = { HookToggleAgain = function() toggleHooked = false; HookToggle() end, LineFor = LineFor, GameLines = GameLines, CraftNow = CraftNow, GameFormRecipe = GameFormRecipe, FirstLine = FirstLine, HookBook = HookBook, Missing = Missing, Switch = function() return switchBtn end, GuideStep = GuideStep, WorkOrder = WorkOrder, RefreshGuide = RefreshGuide, SetTab = SetTab,
+    RecipeProfit = function(r) return RecipeProfit(r) end, RecipeCost = RecipeCost, BestCost = BestCost, CostLines = CostLines, ReadRecipes = function() ReadRecipes(); return recipes end, ListItems = ListItems, CanMake = CanMake,
     Open = Open, Close = Close, Select = Select, Make = Make, Plan = Plan, Refresh = Refresh,
     Tucked = function() return tucked end, Window = function() return win end }

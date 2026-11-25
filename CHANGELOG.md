@@ -2,6 +2,35 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.12.1 - 2026-11-26
+
+### New
+- **Professions window: profit and sorting** - every recipe in the list shows the profit of one craft (green when it pays, red when it loses), and **Sort** switches between the game's order, profit high first and profit low first.
+- **Professions window: skill-up chevrons** - the game's own chevrons show each recipe's skill-up chance, instead of coloured names.
+- **Professions window: Plan and Mastercraft guide tabs** - the right side has two tabs. **Mastercraft guide** shows the step you're on as a work order: what to make first (sub-crafts, each with its own **Make**), then the main craft, plus **Plan mats for all of it**, **Skip step** / **Undo skips**, and **Where to learn it** for recipes you haven't learned. Mastercraft's own panel is one button away.
+- **Professions window: opens from the Professions overview** - pressing K (or the micro-menu button) goes straight to the JaseTools window on the profession you used last, instead of stopping at WoW Forever's Professions overview. **All professions** opens the overview itself.
+- **Professions window: what's missing besides materials** - a recipe that needs an anvil, forge or tool you aren't near says so in red, and **Make** waits until you are.
+- **Professions window: fades while you move** - while your character moves the window drops to 20% so you can see where you're going (fully visible again when you stop, or with the mouse over it).
+- **Professions window: Clear plan** - drops this character's whole plan from the Plan tab.
+- **Professions window: turning it on** - its own **Professions** group in `/jq`, and a **JaseTools view** button on the game's profession window that switches it on and opens it.
+- **Request plan: auction house step** - what no alt has is a numbered step of its own before anything is made from it, with prices, a **Shopping list** button at the auction house, and it ticks itself off once you've bought the items.
+- **Request plan: stock on hand** - each material of a make step is its own row with how many are in your bags (and bank or mail), coloured by whether you have enough; hover it for where every one is, alts included.
+- **Request plan: one click makes** - make in the plan opens the right profession on the press and makes on the release, so one click does both.
+- **`/jprof debug`** - records every step of opening a profession, to find out what goes wrong.
+
+### Changed
+- **Crafting progress bar** is the Professions window's bottom strip while it's open, and is no longer an EllesmereUI Unlock Mode element.
+- **Make** in the Professions window presses the game's own Create button, and chat says so if no craft starts.
+- **Profession buttons** use the game's own list of your professions to open them.
+- **Requests tab** no longer opens by itself at a bank or mailbox while the plan popout is on.
+
+### Fixed
+- **The game's profession window broke** (giant search box, Create bar across the screen) after using the Professions window: it is now moved out of sight instead of being shrunk.
+- **Professions sometimes opened in the game's window** after Classic view or on the first open of a session.
+- **Crafting progress bar** could count past the batch ("13 / 1").
+- **Make in the plan** said it had opened a profession when it hadn't; it now checks.
+- **The Mastercraft guide tab** could be missing until Mastercraft finished loading.
+
 ## v1.12.0 - 2026-11-25
 
 ### New

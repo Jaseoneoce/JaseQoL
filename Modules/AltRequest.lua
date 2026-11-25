@@ -99,6 +99,7 @@ end
 -- {[id] = still needed} for a recipient
 local IsVendor   -- forward (vendor list below): vendor items are never requested
 local QueueMini  -- forward (plan popout below): redraw it shortly
+local Plan       -- forward (the planner below)
 local FinishRequest  -- forward (plan popout below): this character's plan is over
 
 local function Remaining(recipient)
@@ -132,10 +133,16 @@ end
 
 local function AddRequest(recipient, wants, label)
     local r = RequestOf(recipient, true)
+    local bags, bank, mail
     for id, n in pairs(wants) do
         if n > 0 and not IsVendor(id) then
             local e = r.items[id] or { need = 0, sent = 0 }
             e.need = e.need + n
+            if not e.base then
+                bags, bank, mail = bags or Holdings(recipient)
+                if not bank then bags, bank, mail = Holdings(recipient) end
+                e.base = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0)
+            end
             r.items[id] = e
         end
     end
@@ -246,8 +253,22 @@ end
 local function TidyOwn()
     local me = db and Alts and Alts.MyName()
     local r = me and RequestOf(me)
-    if not (r and (r.own or r.make)) or (MailFrame and MailFrame:IsShown()) then return end
+    if not (r and (r.own or r.make or next(r.items))) or (MailFrame and MailFrame:IsShown()) then return end
     local changed = false
+    -- what no alt had and you've since bought (or farmed): that part is done
+    local _, short = Plan(me)
+    if short and next(short) then
+        local bags, bank, mail = Holdings(me)
+        for id, left in pairs(short) do
+            local e = r.items[id]
+            local have = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0)
+            if e and e.base and have - e.base >= left then
+                e.need = math.max(e.sent or 0, (e.need or 0) - left)
+                e.base = e.base + left
+                changed = true
+            end
+        end
+    end
     if r.make then
         local still = {}
         for _, e in ipairs(MakeLeft(me)) do still[e.id] = true end
@@ -272,7 +293,7 @@ end
 --  Planner
 -------------------------------------------------------------------------------
 -- steps = { {alt, items = {[id] = {bags = n, bank = n, mail = n}}, bankTown}, ... }, short = {[id] = n}
-local function Plan(recipient)
+function Plan(recipient)
     local rem = Remaining(recipient)
     if not next(rem) then return nil end
     local realm = Alts.RealmTable()
@@ -1679,7 +1700,8 @@ local TICK = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t"
 local MINI_EVENTS = {
     PLAYER_LOGIN = true, BAG_UPDATE_DELAYED = true, MAIL_SHOW = true, MAIL_CLOSED = true, MAIL_INBOX_UPDATE = true,
     MAIL_SEND_SUCCESS = true, MAIL_FAILED = true, BANKFRAME_OPENED = true, BANKFRAME_CLOSED = true,
-    PLAYER_INTERACTION_MANAGER_FRAME_SHOW = true, MERCHANT_SHOW = true,
+    PLAYER_INTERACTION_MANAGER_FRAME_SHOW = true, PLAYER_INTERACTION_MANAGER_FRAME_HIDE = true, MERCHANT_SHOW = true,
+    AUCTION_HOUSE_SHOW = true, AUCTION_HOUSE_CLOSED = true,
 }
 local mini, miniHidden, miniQueued
 local dockHost   -- a frame of another JaseTools window the plan sits in while that window is open
@@ -1698,16 +1720,15 @@ local MINING_LINE = 186   -- the Mining skill line: its window is Smelting
 --  Crafting progress bar: whenever a batch is crafted in a profession window
 --  (the game's Create / Create All, Mastercraft's Craft button, the plan's
 --  "make"), one bar for the whole batch: a tick per craft, how many are done
---  and the time left. Drag it to move it. With EllesmereUI it is also an
---  Unlock Mode element (group "JaseTools"), like EUI's own XP and reputation
---  bars: move it, type a width and height, match another element's size.
+--  and the time left. While the Professions window is open it is that
+--  window's bottom strip; otherwise it floats where you drag it.
 --  JaseQoLDB.altRequest.bar = { w, h, pos = { point, relPoint, x, y } }
 -------------------------------------------------------------------------------
 local BAR_KEY = "craftProgress"
 JQ.AddModule({
     key = BAR_KEY,
     label = "Crafting progress bar",
-    description = "While you craft a batch in a profession window, a bar shows the whole batch: a tick for every craft, how many are done and the time left. Works for every craft, however it was started. Drag it to move it; with EllesmereUI, move and resize it in Unlock Mode (JaseTools > Crafting Progress) like the XP bar. Needs Request mats from alts.",
+    description = "While you craft a batch in a profession window, a bar shows the whole batch: a tick for every craft, how many are done and the time left. Works for every craft, however it was started. In the Professions window it is the bottom strip; otherwise drag it where you like. Needs Request mats from alts.",
     default = true,
 })
 
@@ -1722,6 +1743,7 @@ local function StopMaking()
 end
 
 local BAR_W, BAR_H = 280, 18
+local barDock   -- a frame of the Professions window the bar fills while that window is open
 local function BarCfg()
     db.bar = db.bar or {}
     if db.barPos then   -- where an earlier version kept it
@@ -1735,6 +1757,19 @@ end
 local function ApplyCraftBar()
     local bar = craftBar
     if not bar then return end
+    if barDock then
+        -- docked: the Professions window's whole bottom strip, always there
+        bar:SetParent(barDock)
+        bar:ClearAllPoints()
+        bar:SetAllPoints(barDock)
+        bar:SetFrameLevel(barDock:GetFrameLevel() + 2)
+        bar.total = nil
+        UI.SetFont(bar.text, 11)
+        bar.text:Show()
+        return
+    end
+    bar:SetParent(UIParent)
+    bar:SetFrameStrata("MEDIUM")
     local c = BarCfg()
     local w, h = math.max(60, c.w or BAR_W), math.max(6, c.h or BAR_H)
     bar:SetSize(w, h)
@@ -1757,9 +1792,10 @@ local function BuildCraftBar()
     bar:SetClampedToScreen(true)
     bar:SetMovable(true)
     bar:RegisterForDrag("LeftButton")
-    bar:SetScript("OnDragStart", bar.StartMoving)
+    bar:SetScript("OnDragStart", function(self) if not barDock then self:StartMoving() end end)
     bar:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
+        if barDock then return end
         local p, _, rp, x, y = self:GetPoint()
         BarCfg().pos = { point = p, relPoint = rp, x = x, y = y }
     end)
@@ -1796,8 +1832,8 @@ local function BuildCraftBar()
         end
         for i = n + 1, #self.ticks do self.ticks[i]:Hide() end
     end
-    -- The bar is always there (so Unlock Mode has something to hold) and
-    -- invisible while nothing is being made; in Unlock Mode it shows a sample.
+    -- The bar is always there and invisible while nothing is being made
+    -- (docked in the Professions window it stays visible, empty).
     function bar:SetIdle(idle)
         if self.idle == idle then return end
         self.idle = idle
@@ -1805,15 +1841,19 @@ local function BuildCraftBar()
         self:EnableMouse(not idle)
     end
     bar:SetScript("OnUpdate", function(self)
+        -- docked: put back in the Professions window's strip if anything moved it
+        if barDock and self:GetParent() ~= barDock then ApplyCraftBar() end
         local m = making
+        if not m and barDock then
+            -- docked and idle: an empty bar that says so
+            self:SetIdle(false)
+            self:Layout(1)
+            self.fill:SetWidth(0.001)
+            self.text:SetText("|cff9e9ea8Crafting progress: nothing being made|r")
+            return
+        end
         if not m then
-            local preview = EllesmereUI and EllesmereUI._unlockActive and JQ.IsEnabled(KEY) and JQ.IsEnabled(BAR_KEY)
-            self:SetIdle(not preview)
-            if preview then
-                self:Layout(10)
-                self.fill:SetWidth(math.max(0.001, (self:GetWidth() - 2) * 0.4))
-                self.text:SetText("Crafting progress   4 / 10   0:12 left")
-            end
+            self:SetIdle(true)
             return
         end
         self:SetIdle(false)
@@ -1839,58 +1879,20 @@ local function BuildCraftBar()
     bar:SetIdle(true)
 end
 
--- EllesmereUI's Unlock Mode: the bar as an element you can move, resize and
--- size-match, the way EUI's XP and reputation bars are.
-local barRegistered = false
-local function RegisterCraftBar()
-    local E = EllesmereUI
-    if barRegistered or not (db and E and E.RegisterUnlockElements and E.MakeUnlockElement) then return end
-    barRegistered = true
-    if not craftBar then BuildCraftBar() end
-    local function round(v) return math.floor((v or 0) + 0.5) end
-    E:RegisterUnlockElements({
-        E.MakeUnlockElement({
-            key = "JaseTools_CraftBar",
-            label = "Crafting Progress",
-            group = "JaseTools",
-            order = 900,
-            isHidden = function() return not (JQ.IsEnabled(KEY) and JQ.IsEnabled(BAR_KEY)) end,
-            getFrame = function() return craftBar end,
-            getSize = function()
-                local c = BarCfg()
-                return c.w or BAR_W, c.h or BAR_H
-            end,
-            setWidth = function(_, w)
-                BarCfg().w = math.max(60, round(w))
-                ApplyCraftBar()
-            end,
-            setHeight = function(_, h)
-                BarCfg().h = math.max(6, round(h))
-                ApplyCraftBar()
-            end,
-            savePos = function(_, point, relPoint, x, y)
-                if not (point and x and y) then return end
-                BarCfg().pos = { point = point, relPoint = relPoint or point, x = x, y = y }
-                if not E._unlockActive then ApplyCraftBar() end
-            end,
-            loadPos = function()
-                local pos = BarCfg().pos
-                if not (pos and pos.point) then return nil end
-                return { point = pos.point, relPoint = pos.relPoint or pos.point, x = pos.x, y = pos.y }
-            end,
-            clearPos = function()
-                BarCfg().pos = nil
-                ApplyCraftBar()
-            end,
-            applyPos = function() ApplyCraftBar() end,
-        }),
-    }, "JaseQoL")
-end
 
 -- A batch of count crafts of a recipe has just been started.
 local function StartMaking(rid, count)
     if not (db and JQ.IsEnabled(KEY) and JQ.IsEnabled(BAR_KEY)) then return end
     local total = math.max(1, math.floor(tonumber(count) or 1))
+    if total <= 1 then
+        -- some ways of crafting don't pass the count on: the profession window's "how many" box has it
+        local page = ProfessionsFrame and ProfessionsFrame.CraftingPage
+        local box = page and page.CreateMultipleInputBox
+        if box and box.GetValue then
+            local ok, v = pcall(box.GetValue, box)
+            if ok and tonumber(v) and tonumber(v) > total then total = math.floor(tonumber(v)) end
+        end
+    end
     local name
     if rid and C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo then
         local ok, info = pcall(C_TradeSkillUI.GetRecipeInfo, rid)
@@ -1921,6 +1923,16 @@ local function HookCrafts()
 end
 
 -- UNIT_SPELLCAST_* for the player while a batch is being made
+-- How many crafts of the batch the game still has queued, where the client can say (nil otherwise).
+local function RepeatsLeft()
+    for _, fn in ipairs({ C_TradeSkillUI and C_TradeSkillUI.GetRemainingRepeatCount, _G.GetTradeskillRepeatCount }) do
+        if type(fn) == "function" then
+            local ok, n = pcall(fn)
+            if ok and type(n) == "number" and n >= 0 then return n end
+        end
+    end
+end
+
 local function CastEvent(event, unit, _, spellID)
     if not making or unit ~= "player" then return end
     -- the first cast after starting says which spell the batch is (recipe IDs aren't always the spell)
@@ -1940,18 +1952,48 @@ local function CastEvent(event, unit, _, spellID)
             making.castStart, making.castEnd = now, now + (making.per or 2)
         end
         making.idleAt = nil
+        making.finished = nil
+        -- another craft of the batch: never more done than the batch holds
+        local left = RepeatsLeft()
+        if left and left > 0 then making.total = math.max(making.total, making.done + left) end
+        if making.done >= making.total then making.total = making.done + 1 end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         making.done = making.done + 1
         making.castStart, making.castEnd = nil, nil
         making.idleAt = now
-        if making.done >= making.total then
-            making.finished = now   -- the full bar stays a moment
+        if making.done >= making.total and not making.finished then
+            making.finished = now   -- the full bar stays a moment (unless another craft starts)
         end
     else
         -- interrupted or failed: over unless the next craft starts straight away
         making.castStart, making.castEnd = nil, nil
         making.idleAt = now
     end
+end
+
+-- The recipe in the open profession window that makes an item, or nil.
+local function OpenRecipeFor(id)
+    local T = C_TradeSkillUI
+    if not (T and T.GetAllRecipeIDs and ProfessionsFrame and ProfessionsFrame:IsShown()) then return nil end
+    for _, rid in ipairs(T.GetAllRecipeIDs() or {}) do
+        local info = T.GetRecipeInfo and T.GetRecipeInfo(rid)
+        local sch = info and info.learned and T.GetRecipeSchematic and T.GetRecipeSchematic(rid, false)
+        if sch and sch.outputItemID == id then return rid end
+    end
+end
+
+-- On the button's press: open the profession that makes it, so the release
+-- (a second click of its own, a moment later) finds it open and makes it.
+-- One click does both: switching profession and crafting each need a click.
+local function MakePrepare(id)
+    if not id or InCombatLockdown() or OpenRecipeFor(id) then return end
+    local T = C_TradeSkillUI
+    local known = JaseQoLDB.recipeIndex and JaseQoLDB.recipeIndex[id]
+    local PV = JQ.ProfView
+    local line = (type(known) == "table" and known.line)
+        or (SMELT[id] and ((PV and PV.LineFor and PV.LineFor("Mining")) or MINING_LINE)) or nil
+    if PV and PV.Debug then PV.Debug("make press %s: open line %s first", ItemName(id), tostring(line)) end
+    if line and T and T.OpenTradeSkill then pcall(T.OpenTradeSkill, line) end
 end
 
 local function MakeNow(id, n)
@@ -1972,7 +2014,15 @@ local function MakeNow(id, n)
                         return
                     end
                     if can then crafts = math.min(crafts, can) end
-                    T.CraftRecipe(rid, crafts)
+                    if JQ.ProfView and JQ.ProfView.Debug then
+                        JQ.ProfView.Debug("plan make %s: recipe %s in the open window, crafting %d (can %s)", name, tostring(rid), crafts, tostring(can))
+                    end
+                    -- through the Professions window (the game's own Create button) when it's there
+                    if JQ.ProfView and JQ.ProfView.Active() and JQ.ProfView.CraftNow then
+                        JQ.ProfView.CraftNow(rid, crafts, info.name or name)
+                    else
+                        T.CraftRecipe(rid, crafts)
+                    end
                     Status(("Making %d %s."):format(crafts * math.max(1, sch.quantityMin or 1), name), true)
                     return
                 end
@@ -1981,9 +2031,28 @@ local function MakeNow(id, n)
         -- not in the open window (or none open): open the profession that makes
         -- it (remembered from when its recipes were read; bars are smelted)
         local known = JaseQoLDB.recipeIndex and JaseQoLDB.recipeIndex[id]
-        local line = (type(known) == "table" and known.line) or (SMELT[id] and MINING_LINE) or nil
+        local PV = JQ.ProfView
+        local smelt = SMELT[id] and ((PV and PV.LineFor and PV.LineFor("Mining")) or MINING_LINE)
+        local line = (type(known) == "table" and known.line) or smelt or nil
+        local before = T.GetBaseProfessionInfo and select(2, pcall(T.GetBaseProfessionInfo))
+        if PV and PV.Debug then PV.Debug("plan make %s: open line %s (known=%s smelt=%s)", name, tostring(line),
+            tostring(type(known) == "table" and known.line), tostring(smelt)) end
         if line and T.OpenTradeSkill and pcall(T.OpenTradeSkill, line) then
-            Status(("Opened the profession that makes %s. Click make again."):format(name))
+            -- only say it opened once it has: check a moment later
+            C_Timer.After(0.6, function()
+                local ok, now = pcall(T.GetBaseProfessionInfo)
+                local opened = ok and type(now) == "table" and now.professionID == line
+                    and not (type(before) == "table" and before.professionID == line)
+                if PV and PV.Debug then PV.Debug("  0.6s later: %s id=%s", tostring(ok and now and now.professionName), tostring(ok and now and now.professionID)) end
+                if opened then
+                    -- the recipe ready in the window: the next click makes it
+                    if PV and PV.SelectOutput then pcall(PV.SelectOutput, id) end
+                    Status(("Opened %s for %s. Click make again."):format(now.professionName or "the profession", name))
+                else
+                    Status(("The game didn't open the profession for %s from here. Open %s yourself (spellbook), then click make: from then on it's known."):format(
+                        name, SMELT[id] and "Smelting" or "it"))
+                end
+            end)
             return
         end
         Status(open and ("%s isn't in the open profession window. Open the profession that makes it, then click make."):format(name)
@@ -2043,7 +2112,10 @@ local function MiniLines()
         local own = OwnFetch(recipient)
         local collect = #steps > 0 or #sent > 0
         local makes = MakeLeft(recipient)
-        local total = #sent + #steps + (#own > 0 and 1 or 0) + (collect and 1 or 0) + (#makes > 0 and 1 or 0)
+        local buy = {}
+        for id, k in pairs(short or {}) do buy[#buy + 1] = { id = id, n = k } end
+        table.sort(buy, function(a, b) return ItemName(a.id) < ItemName(b.id) end)
+        local total = #sent + #steps + (#own > 0 and 1 or 0) + (collect and 1 or 0) + (#buy > 0 and 1 or 0) + (#makes > 0 and 1 or 0)
         do
             lines[#lines + 1] = { head = true, text = total > 0 and ("For %s  |cff9e9ea8step %d of %d|r"):format(
                 NameOf(recipient), math.min(#sent + 1, total), total) or ("For " .. NameOf(recipient)) }
@@ -2113,37 +2185,60 @@ local function MiniLines()
                     recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
                 lines[#lines + 1] = { sub = true, now = #steps == 0, auto = "mail", text = "|cffffffffMailbox:|r collect the mail" }
             end
+            if collect then n = n + 1 end
+            -- what no alt has: the auction house (or farm it), before anything is made from it
+            if #buy > 0 then
+                n = n + 1
+                local mineStep = recipient == me
+                local bags, bank, mail = Holdings(recipient)
+                lines[#lines + 1] = { now = true, gap = true, text = ("%d. %s  |cff9e9ea8auction house|r"):format(n,
+                    mineStep and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
+                local cost, priced = 0, 0
+                for i, b in ipairs(buy) do
+                    if i > 6 then
+                        lines[#lines + 1] = { sub = true, text = ("and %d more - see Details"):format(#buy - 6) }
+                        break
+                    end
+                    local e = r.items[b.id]
+                    local have = (bags[b.id] or 0) + (bank[b.id] or 0) + (mail[b.id] or 0)
+                    local got = e and e.base and math.max(0, have - e.base) or 0
+                    local price = JQ.CostToBuy and JQ.CostToBuy(b.id, b.n)
+                    if price then cost, priced = cost + price, priced + 1 end
+                    lines[#lines + 1] = { sub = true, now = true, item = b.id, text = ItemText(b.id, b.n),
+                        tag = got > 0 and ("|cff59d959bought %d|r"):format(math.min(got, b.n))
+                            or (price and Money(price)) or "no price yet" }
+                end
+                local api = ShoppingListAPI() ~= nil
+                lines[#lines + 1] = { sub = true, now = true, text = ("|cffffffffAuction house:|r buy %s%s"):format(
+                    #buy == 1 and "it" or "them",
+                    (priced > 0 and ("  |cff9e9ea8about %s|r"):format(Money(cost)) or "")
+                    .. (api and (mineStep and "  |cff9e9ea8(press Shopping list there)|r" or "") or "  |cff9e9ea8(or farm it)|r")) }
+            end
             -- last: what the requester makes itself once the materials are in its bags
             if #makes > 0 then
-                local ready = #steps == 0 and #own == 0
-                lines[#lines + 1] = { now = ready, gap = true, text = ("%d. %s  |cff9e9ea8make|r"):format(n + (collect and 2 or 1),
+                local ready = #steps == 0 and #own == 0 and #buy == 0
+                lines[#lines + 1] = { now = ready, gap = true, text = ("%d. %s  |cff9e9ea8make|r"):format(n + 1,
                     recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
+                local bags, bank, mail = Holdings(recipient)
                 for _, m in ipairs(makes) do
                     local rec = MakeRecipe(m.id, recipient)
-                    local from = {}
-                    for rid, q in pairs(rec and rec.r or {}) do
-                        from[#from + 1] = (math.ceil(m.n / (rec.n or 1)) * q) .. " " .. ItemName(rid)
-                    end
-                    table.sort(from)
                     lines[#lines + 1] = { sub = true, now = ready, item = m.id, text = ItemText(m.id, m.n),
                         tag = recipient == me and "click to make" or "make", make = recipient == me and m or nil }
-                    if #from > 0 then
-                        lines[#lines + 1] = { sub = true, now = ready, text = "   from " .. table.concat(from, ", ") }
+                    -- what it's made from, each with what's on hand (bags, then bank / mail)
+                    local crafts = rec and math.ceil(m.n / math.max(1, rec.n or 1)) or 0
+                    local ids = {}
+                    for rid in pairs(rec and rec.r or {}) do ids[#ids + 1] = rid end
+                    table.sort(ids, function(a, b) return ItemName(a) < ItemName(b) end)
+                    for _, rid in ipairs(ids) do
+                        local need = crafts * rec.r[rid]
+                        local inBags = bags[rid] or 0
+                        local away = (bank[rid] or 0) + (mail[rid] or 0)
+                        local col = inBags >= need and "59d959" or (inBags + away >= need and "ffd25a" or "ff7070")
+                        lines[#lines + 1] = { deep = true, now = ready, item = rid, text = ItemText(rid, need),
+                            tag = ("|cff%shave %d|r%s"):format(col, inBags, away > 0 and ("  |cff9e9ea8+%d bank/mail|r"):format(away) or ""),
+                            soh = { need = need, bags = inBags, bank = bank[rid] or 0, mail = mail[rid] or 0, who = recipient } }
                     end
                 end
-            end
-        end
-        if short and next(short) then
-            local ids = {}
-            for id in pairs(short) do ids[#ids + 1] = id end
-            table.sort(ids, function(a, b) return ItemName(a) < ItemName(b) end)
-            lines[#lines + 1] = { gap = true, now = true, text = "|cffff7070No alt has these|r" }
-            for i, id in ipairs(ids) do
-                if i > 6 then
-                    lines[#lines + 1] = { sub = true, text = ("and %d more - see Details"):format(#ids - 6) }
-                    break
-                end
-                lines[#lines + 1] = { sub = true, now = true, item = id, text = ItemText(id, short[id]), tag = "buy or farm" }
             end
         end
     end
@@ -2238,8 +2333,13 @@ local function BuildMini()
             self:SetParent(dockHost)
             self:SetPoint("TOPLEFT", dockHost, "TOPLEFT", 0, 0)
             self:SetFrameLevel(dockHost:GetFrameLevel() + 2)
+            -- (that window has its own heading and close button)
+            if self.title then self.title:Hide() end
+            if self.close then self.close:Hide() end
             return
         end
+        if self.title then self.title:Show() end
+        if self.close then self.close:Show() end
         self:SetParent(UIParent)
         self:SetFrameStrata("MEDIUM")
         local pos = db.mini.pos
@@ -2266,6 +2366,7 @@ local function BuildMini()
     mini.title:SetPoint("TOPLEFT", 10, -8)
     mini.title:SetText(("|cff%sRequest plan|r"):format(UI.AccentHex()))
     local close = UI.Button(mini, "x", 18, 18)
+    mini.close = close
     close:SetPoint("TOPRIGHT", -5, -5)
     close.text:ClearAllPoints()   -- the usual side padding leaves no room for the x
     close.text:SetPoint("CENTER")
@@ -2281,6 +2382,9 @@ local function BuildMini()
     mini.action:SetScript("OnClick", function(self)
         if self.run then JQ.Try("request plan popout: button", self.run) end
         QueueMini()
+    end)
+    mini.action:SetScript("OnMouseDown", function(self, button)
+        if self.prep and button == "LeftButton" and self:IsEnabled() then JQ.Try("request plan popout: button", self.prep) end
     end)
     mini.details = UI.Button(mini, "Details", 144, 22)
     mini.details:SetPoint("BOTTOMRIGHT", -10, 8)
@@ -2305,7 +2409,7 @@ local function RefreshMini()
         mini:Place()
     end
     -- text lines wrap, so each row is placed under the one before by its real height
-    local y = 30
+    local y = dockHost and 8 or 30
     for i, d in ipairs(lines) do
         local row = mini.lines[i]
         if not row then
@@ -2319,8 +2423,43 @@ local function RefreshMini()
             row.tag:SetPoint("RIGHT", -2, 0)
             row.text = UI.Text(row, 11)
             row.text:SetJustifyV("TOP")
-            row:SetScript("OnEnter", UI.ItemEnter)
+            row:SetScript("OnEnter", function(self)
+                UI.ItemEnter(self)
+                -- a material: what's on hand, where, and on your alts
+                local soh = self.soh
+                if not (soh and self.itemID and GameTooltip:IsOwned(self)) then return end
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddDoubleLine("Needed", tostring(soh.need), 1, 0.82, 0.35, 1, 1, 1)
+                local function line(label, n, r, g, b)
+                    if n > 0 then GameTooltip:AddDoubleLine(label, tostring(n), r or 0.9, g or 0.9, b or 0.9, 1, 1, 1) end
+                end
+                line("In bags", soh.bags, 0.35, 0.85, 0.35)
+                line("In the bank", soh.bank)
+                line("In the mail", soh.mail)
+                if soh.bags + soh.bank + soh.mail == 0 then GameTooltip:AddLine("None on this character", 1, 0.44, 0.44) end
+                for name, data in pairs(Alts.RealmTable()) do
+                    if name ~= soh.who then
+                        local b, k, m = Holdings(name)
+                        local n = (b[self.itemID] or 0) + (k[self.itemID] or 0) + (m[self.itemID] or 0)
+                        if n > 0 then
+                            GameTooltip:AddDoubleLine(Alts.Display(name), tostring(n), UI.QualityColor(1))
+                        end
+                    end
+                end
+                local missing = soh.need - soh.bags
+                if missing > 0 then
+                    GameTooltip:AddLine(soh.bags + soh.bank + soh.mail >= soh.need
+                        and ("Take %d out of the bank or mail first."):format(missing)
+                        or ("Short by %d."):format(soh.need - soh.bags - soh.bank - soh.mail), 1, 0.82, 0.35, true)
+                end
+                GameTooltip:Show()
+            end)
             row:SetScript("OnLeave", UI.HideTip)
+            row:SetScript("OnMouseDown", function(self, button)
+                if self.make and button == "LeftButton" and not IsModifiedClick("CHATLINK") then
+                    JQ.Try("request plan popout: make", MakePrepare, self.make.id)
+                end
+            end)
             row:SetScript("OnClick", function(self)
                 -- a "make" row crafts; any other item row links the item with shift
                 if self.make and not IsModifiedClick("CHATLINK") then
@@ -2331,11 +2470,11 @@ local function RefreshMini()
             end)
             -- dragging a row moves the popout, like dragging its background
             row:RegisterForDrag("LeftButton")
-            row:SetScript("OnDragStart", function() if not dockHost then mini:StartMoving() end end)
+            row:SetScript("OnDragStart", function() mini:GetScript("OnDragStart")(mini) end)
             row:SetScript("OnDragStop", function() mini:GetScript("OnDragStop")(mini) end)
             mini.lines[i] = row
         end
-        local indent = d.sub and 16 or 0
+        local indent = (d.deep and 32) or (d.sub and 16) or 0
         local w = MINI_W - 20 - indent
         if d.gap or d.head then y = y + (i > 1 and 6 or 0) end
         row:ClearAllPoints()
@@ -2343,6 +2482,7 @@ local function RefreshMini()
         row:SetWidth(w)
         row.itemID = d.item
         row.make = d.make
+        row.soh = d.soh
         row.text:ClearAllPoints()
         local h
         if d.item then
@@ -2401,9 +2541,18 @@ local function RefreshMini()
     if mine then
         cands[#cands + 1] = { "Send", function() StartSend(mine.to) end, mailOpen and not job and not taking }
     end
+    -- at the auction house: the shopping list of what no alt has
+    local ahOpen = (AuctionHouseFrame and AuctionHouseFrame:IsShown()) or (AuctionFrame and AuctionFrame:IsShown())
+    if ahOpen and ShoppingListAPI() then
+        local toBuy, order = BuyList(Alts.MyName())
+        if #order > 0 then
+            table.insert(cands, 1, { "Shopping list", function() MakeShoppingList(order, toBuy) end, true })
+        end
+    end
     local toMake = MakeLeft(Alts.MyName())[1]
     if toMake then
-        cands[#cands + 1] = { ("Make %d"):format(toMake.n), function() MakeNow(toMake.id, toMake.n) end, true }
+        cands[#cands + 1] = { ("Make %d"):format(toMake.n), function() MakeNow(toMake.id, toMake.n) end, true,
+            function() MakePrepare(toMake.id) end }
     end
     if #cands == 0 and req and not next(req.items) then
         -- nothing left for anyone to send: finish by hand if it's still listed
@@ -2417,6 +2566,7 @@ local function RefreshMini()
     if pick then
         b.text:SetText(pick[1])
         b.run = pick[2]
+        b.prep = pick[4]
         b:SetEnabledLook(pick[3] and true or false)
         b:Show()
     else
@@ -2947,7 +3097,8 @@ ev:SetScript("OnEvent", function(_, event, ...)
             mailHooked = true
             MailFrame:HookScript("OnHide", function() QueueMini() end)
         end
-        if HasJobs() then JQ.Hub.Show("requests") end
+        -- (the plan popout shows the job and its buttons: the full tab only without it)
+        if HasJobs() and not JQ.IsEnabled(MINI_KEY) then JQ.Hub.Show("requests") end
     elseif event == "MAIL_INBOX_UPDATE" then
         inboxSeen = true
     elseif event == "MAIL_CLOSED" then
@@ -2957,7 +3108,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
     elseif event == "BANKFRAME_OPENED" or (event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW"
         and Enum and Enum.PlayerInteractionType and (... == Enum.PlayerInteractionType.Banker
         or ... == Enum.PlayerInteractionType.CharacterBanker)) then
-        if HasJobs() then C_Timer.After(0.2, function() JQ.Hub.Show("requests") end) end
+        if HasJobs() and not JQ.IsEnabled(MINI_KEY) then C_Timer.After(0.2, function() JQ.Hub.Show("requests") end) end
         if win and win:IsShown() then C_Timer.After(0.2, function() win:Refresh() end) end
     elseif event == "BANKFRAME_CLOSED" then
         if win and win:IsShown() then win:Refresh() end
@@ -2986,7 +3137,6 @@ ev:SetScript("OnEvent", function(_, event, ...)
     elseif event == "PLAYER_REGEN_ENABLED" then
         JQ.Try("requests: fill crate button", SyncFill)
     elseif event == "PLAYER_LOGIN" then
-        JQ.Try("crafting progress bar: EllesmereUI unlock mode", RegisterCraftBar)
         for recipient in pairs(RealmRequests()) do Tidy(recipient) end
         C_Timer.After(3, function()
             local jobs = MyJobs()
@@ -3076,7 +3226,8 @@ JQ.byKey[KEY].onLoad = function()
         "TRADE_SKILL_LIST_UPDATE", "MERCHANT_SHOW", "MERCHANT_UPDATE",
         "CRAFT_SHOW", "CRAFT_CLOSE", "CRAFT_UPDATE", "MAIL_SHOW", "MAIL_CLOSED", "MAIL_INBOX_UPDATE", "MAIL_SEND_SUCCESS", "MAIL_FAILED",
         "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED",
-        "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED", "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" }) do
+        "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED", "PLAYER_INTERACTION_MANAGER_FRAME_SHOW",
+        "PLAYER_INTERACTION_MANAGER_FRAME_HIDE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED" }) do
         pcall(ev.RegisterEvent, ev, e)
     end
     Alts.OnChange(function()
@@ -3092,7 +3243,6 @@ JQ.byKey[KEY].onDisable = function()
     StopMaking()
 end
 JQ.byKey[BAR_KEY].onDisable = function() StopMaking() end
-JQ.byKey[BAR_KEY].onEnable = function() JQ.Try("crafting progress bar: EllesmereUI unlock mode", RegisterCraftBar) end
 
 -- Plan the materials of N crafts of something: the bank run, the request to
 -- alts, what to make, and the buy list (an Auctionator shopping list when
@@ -3161,7 +3311,23 @@ end
 
 -- for other modules (Mastercraft's Request from alts button)
 JQ.Requests = {
-    PlanFor = PlanFor, HideSide = function() HideSide() end,
+    PlanFor = PlanFor, HideSide = function() HideSide() end, MakeNow = MakeNow, MakePrepare = MakePrepare,
+    -- the crafting progress bar along the bottom of another window (nil: back where you put it)
+    DockBar = function(host)
+        if not (JQ.IsEnabled(KEY) and JQ.IsEnabled(BAR_KEY)) then host = nil end
+        barDock = host
+        if host and not craftBar then BuildCraftBar() end
+        if craftBar then
+            craftBar.idle = nil
+            ApplyCraftBar()
+            craftBar:Show()
+            if not making and not host then craftBar:SetIdle(true) end
+        end
+        return host ~= nil
+    end,
+    -- this character's own plan: is there one, and drop all of it
+    HasPlan = function() local me = Alts and Alts.MyName(); return me ~= nil and RequestOf(me) ~= nil end,
+    Cancel = function() FinishRequest("Plan cancelled.") end,
     MakeRecipe = MakeRecipe, IsVendor = function(id) return IsVendor(id) end, Money = Money,
     Dock = function(host) dockHost = host; QueueMini() end,
     Undock = function()
@@ -3179,7 +3345,8 @@ JQ.Requests = {
 -- for tests
 JQ._AltRequest = { Breakdown = Breakdown, ScanRecipes = ScanRecipes, IsVendor = IsVendor, Plan = Plan, MyJobs = MyJobs, AddRequest = AddRequest, Remaining = Remaining,
     PullFromBank = PullFromBank, StartSend = StartSend, Rows = Rows, FillableCrates = FillableCrates,
-    MailWants = MailWants, BankPulls = BankPulls, AutoRun = AutoRun, MakeNow = MakeNow,
+    MailWants = MailWants, BankPulls = BankPulls, AutoRun = AutoRun, MakeNow = MakeNow, MakePrepare = MakePrepare,
     Making = function() return making end, StartMaking = StartMaking, CastEvent = CastEvent,
-    RegisterCraftBar = RegisterCraftBar,
+    BarFrame = function() return craftBar end,
+    ApplyCraftBar = function() ApplyCraftBar() end,
     ParseBundles = ParseBundles, MyCrates = MyCrates, BestBundle = BestBundle, NameIndex = NameIndex }
