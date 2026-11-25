@@ -2,6 +2,15 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.9.1 - 2026-11-25
+
+### Changed
+- **Request plan: each step broken down** - under every step the popout now names the items and where they are: what to take from the bank, what to take out of the mail, what is already in bags, and how many to send to whom. Long lists wrap onto the next line instead of being cut off, an alt that isn't parked near a bank says so, and the "No alt has" line names up to six items.
+- **Request plan: Details opens and closes** - the **Details** button closes the Requests tab when it's already open, instead of only opening it.
+
+### Fixed
+- **Request plan: the close button** showed ".." instead of an x.
+
 ## v1.9.0 - 2026-11-25
 
 ### New

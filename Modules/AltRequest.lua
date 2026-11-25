@@ -1293,7 +1293,7 @@ JQ.AddModule({
     default = true,
 })
 
-local MINI_W, MINI_LINE = 280, 16
+local MINI_W, MINI_LINE = 320, 14
 local TICK = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t"
 local MINI_EVENTS = {
     PLAYER_LOGIN = true, BAG_UPDATE_DELAYED = true, MAIL_SHOW = true, MAIL_CLOSED = true,
@@ -1308,7 +1308,22 @@ local function Sum(t)
     return n
 end
 
--- { {text, now = bool, head = bool}, ... } for every open request on this realm
+-- "40 Rugged Leather, 6 Rune Thread" for the part of a step's items kept in
+-- one place (field = "bags" / "bank" / "mail"), by name; nil when there's none
+local function PlaceList(items, field)
+    local ids = {}
+    for id, e in pairs(items) do
+        if (e[field] or 0) > 0 then ids[#ids + 1] = id end
+    end
+    if #ids == 0 then return nil end
+    table.sort(ids, function(a, b) return ItemName(a) < ItemName(b) end)
+    local out = {}
+    for _, id in ipairs(ids) do out[#out + 1] = ItemText(id, items[id][field]) end
+    return table.concat(out, ", ")
+end
+
+-- { {text, now, head, sub, gap}, ... } for every open request on this realm:
+-- a line per step, and under it where its items are and what to do with them
 local function MiniLines()
     local me = Alts.MyName()
     local lines, names = {}, {}
@@ -1338,34 +1353,35 @@ local function MiniLines()
             local n = #sent
             for i, s in ipairs(steps) do
                 n = n + 1
-                local count, fromMail = 0, 0
-                for _, e in pairs(s.items) do
-                    count = count + (e.bags or 0) + (e.bank or 0) + (e.mail or 0)
-                    fromMail = fromMail + (e.mail or 0)
+                local mineStep = s.alt == me
+                local now = (i == 1) or mineStep
+                local count = 0
+                for _, e in pairs(s.items) do count = count + (e.bags or 0) + (e.bank or 0) + (e.mail or 0) end
+                local where = not mineStep and Alts.WhereText(s.alt)
+                lines[#lines + 1] = { now = now, gap = true, text = ("%d. %s%s"):format(n,
+                    mineStep and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(s.alt)),
+                    where and ("  |cff9e9ea8" .. where .. (s.town and "" or " - no bank here") .. "|r") or "") }
+                local function sub(label, text)
+                    lines[#lines + 1] = { sub = true, now = now, text = "|cffffffff" .. label .. "|r " .. text }
                 end
-                local text
-                if s.alt == me then
-                    local what = s.needsBank and "bank first, then a mailbox"
-                        or (fromMail > 0 and "take them out of your mail first" or "at a mailbox")
-                    text = ("%d. |cffffd25aThis character|r: send %d - %s"):format(n, count, what)
-                else
-                    local where = Alts.WhereText(s.alt)
-                    text = ("%d. %s: %s %d%s"):format(n, NameOf(s.alt), s.needsBank and "bank, then mail" or "mail",
-                        count, where and ("  |cff9e9ea8" .. where .. "|r") or "")
-                end
-                lines[#lines + 1] = { text = text, now = (i == 1) or s.alt == me }
+                local bank, mail, bags = PlaceList(s.items, "bank"), PlaceList(s.items, "mail"), PlaceList(s.items, "bags")
+                if bank then sub("Bank: take", bank) end
+                if mail then sub(mineStep and "Your mail: take out" or "Their mail: take out", mail) end
+                if bags then sub("Already in bags:", bags) end
+                sub("Mailbox: send", ("%d item%s to %s"):format(count, count == 1 and "" or "s", NameOf(recipient)))
             end
-            lines[#lines + 1] = { now = #steps == 0, text = ("%d. %s: collect the mail"):format(n + 1,
-                recipient == me and "|cffffd25aThis character|r" or NameOf(recipient)) }
+            lines[#lines + 1] = { now = #steps == 0, gap = true, text = ("%d. %s"):format(n + 1,
+                recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
+            lines[#lines + 1] = { sub = true, now = #steps == 0, text = "|cffffffffMailbox:|r collect the mail" }
         else
             lines[#lines + 1] = { head = true, text = "For " .. NameOf(recipient) }
         end
         if short and next(short) then
             local list, more = {}, 0
             for id, k in pairs(short) do
-                if #list < 2 then list[#list + 1] = ItemText(id, k) else more = more + 1 end
+                if #list < 6 then list[#list + 1] = ItemText(id, k) else more = more + 1 end
             end
-            lines[#lines + 1] = { text = "|cffff7070Buy or farm:|r " .. table.concat(list, ", ")
+            lines[#lines + 1] = { gap = true, text = "|cffff7070No alt has (buy or farm):|r " .. table.concat(list, ", ")
                 .. (more > 0 and (" +" .. more .. " more") or "") }
         end
     end
@@ -1407,6 +1423,8 @@ local function BuildMini()
     mini.title:SetText(("|cff%sRequest plan|r"):format(UI.AccentHex()))
     local close = UI.Button(mini, "x", 18, 18)
     close:SetPoint("TOPRIGHT", -5, -5)
+    close.text:ClearAllPoints()   -- the usual side padding leaves no room for the x
+    close.text:SetPoint("CENTER")
     close:SetScript("OnClick", function()
         miniHidden = true
         mini:Hide()
@@ -1414,15 +1432,18 @@ local function BuildMini()
     end)
 
     mini.lines = {}
-    mini.action = UI.Button(mini, "", 124, 22)
+    mini.action = UI.Button(mini, "", 144, 22)
     mini.action:SetPoint("BOTTOMLEFT", 10, 8)
     mini.action:SetScript("OnClick", function(self)
         if self.run then JQ.Try("request plan popout: button", self.run) end
         QueueMini()
     end)
-    mini.details = UI.Button(mini, "Details", 124, 22)
+    mini.details = UI.Button(mini, "Details", 144, 22)
     mini.details:SetPoint("BOTTOMRIGHT", -10, 8)
-    mini.details:SetScript("OnClick", function() JQ.Hub.Show("requests") end)
+    -- shows the Requests tab, or closes it when it's the one already open
+    mini.details:SetScript("OnClick", function()
+        if win and win:IsShown() then win:Hide() else JQ.Hub.Show("requests") end
+    end)
 end
 
 local function RefreshMini()
@@ -1434,21 +1455,29 @@ local function RefreshMini()
         return
     end
     if not mini then BuildMini() end
+    -- lines wrap, so each is placed under the one before by its real height
+    local y = 30
     for i, d in ipairs(lines) do
         local fs = mini.lines[i]
         if not fs then
             fs = UI.Text(mini, 11)
-            fs:SetPoint("TOPLEFT", 10, -30 - (i - 1) * MINI_LINE)
-            fs:SetPoint("RIGHT", -10, 0)
+            fs:SetWordWrap(true)
+            fs:SetJustifyV("TOP")
             mini.lines[i] = fs
         end
+        local indent = d.sub and 16 or 0
+        if d.gap or d.head then y = y + (i > 1 and 6 or 0) end
+        fs:ClearAllPoints()
+        fs:SetPoint("TOPLEFT", 10 + indent, -y)
+        fs:SetWidth(MINI_W - 20 - indent)
         fs:SetText(d.text)
         if d.head or d.now then
-            fs:SetTextColor(1, 1, 1)
+            fs:SetTextColor(0.9, 0.9, 0.92)
         else
             fs:SetTextColor(UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
         end
         fs:Show()
+        y = y + math.max(MINI_LINE, math.ceil(fs:GetStringHeight() or 0)) + 2
     end
     for i = #lines + 1, #mini.lines do mini.lines[i]:Hide() end
 
@@ -1470,7 +1499,7 @@ local function RefreshMini()
         b:SetEnabledLook((mailOpen and not job) and true or false)
         b:Show()
     end
-    mini:SetHeight(30 + #lines * MINI_LINE + 38)
+    mini:SetHeight(y + 38)
     mini:Show()
 end
 
