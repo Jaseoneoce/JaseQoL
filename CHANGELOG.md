@@ -2,6 +2,19 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.10.0 - 2026-11-25
+
+### New
+- **Fill crate button** - the Requests tab has a **Fill crate** button (top right) whenever a waylaid crate can be filled from what's in your bags. Each click fills the next one; the button says how many are left. Crates that still need something from your bank, mail, a craft or an alt are left alone until the items are in your bags.
+- **Request plan: items with tooltips** - every item in a step is its own row with its icon and where it is (take from bank, take out of your mail, in bags). Hover a row for the item's tooltip; shift-click links it in chat. Items no alt has are rows too.
+
+### Changed
+- **Request plan finishes when the mail is collected** - once everything has been sent and none of it is left in your mailbox, the plan closes by itself and chat says so. While it waits there's a **Done** button to finish it by hand.
+- **Logging in with a job shows only the request plan** - the full Requests tab no longer opens at login while the popout is on (it still does if you switch the popout off). Opening a bank or mailbox with a job still opens it.
+
+### Fixed
+- **Request plan stayed up after collecting the mail** - a plan with everything sent could stay listed after its mail had been taken.
+
 ## v1.9.1 - 2026-11-25
 
 ### Changed

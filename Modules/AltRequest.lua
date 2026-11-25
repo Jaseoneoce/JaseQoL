@@ -116,8 +116,8 @@ local function Tidy(recipient)
     end
     if not next(r.items) then
         r.crates = nil
-        -- all sent: the request stays, as "collect the mail", until its owner
-        -- has been to a mailbox (r.done = what each alt sent)
+        -- all sent: the request stays, as "collect the mail", until none of
+        -- it is left in its owner's mailbox (r.done = what each alt sent)
         if not (r.done and next(r.done)) then RealmRequests()[recipient] = nil end
     end
 end
@@ -1181,12 +1181,85 @@ end
 
 local AskKeep   -- forward (defined with the prompt below)
 
+-------------------------------------------------------------------------------
+--  Fill crate: one click fills the next crate you can fill from your bags.
+--  Using an item needs a real click on a secure button, and a secure button
+--  can't be touched in combat: so it isn't part of the Requests window (which
+--  must stay free to open and close in a fight) but floats over a spot in it.
+-------------------------------------------------------------------------------
+local fillBtn
+
+-- Crates whose pick is all in my bags right now (nothing to make, fetch or wait for).
+local function FillableCrates(me)
+    local out, seen = {}, {}
+    for _, e in ipairs(CrateResults(me)) do
+        local b = e.best
+        if not e.requested and b and b.short == 0 and #b.alts == 0 and not b.make
+            and (b.fromMail or 0) == 0 and (b.fromBank or 0) == 0 then
+            local key = e.crate.bag .. ":" .. e.crate.slot
+            if not seen[key] then
+                seen[key] = true
+                out[#out + 1] = e.crate
+            end
+        end
+    end
+    return out
+end
+
+local function PlaceFill()
+    if not (fillBtn and win and win.fillSpot) or InCombatLockdown() then return end
+    local x, y = win.fillSpot:GetLeft(), win.fillSpot:GetTop()
+    if not (x and y) or (x == fillBtn.x and y == fillBtn.y) then return end
+    fillBtn.x, fillBtn.y = x, y
+    fillBtn:ClearAllPoints()
+    fillBtn:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, y)
+end
+
+local function SyncFill()
+    if InCombatLockdown() then return end   -- again when the fight ends
+    local me = Alts and Alts.MyName()
+    local crates = (me and win and win:IsShown() and JQ.IsEnabled(KEY)) and FillableCrates(me) or {}
+    if #crates == 0 then
+        if fillBtn then fillBtn:Hide() end
+        return
+    end
+    if not fillBtn then
+        fillBtn = CreateFrame("Button", "JaseQoLFillCrate", UIParent, "SecureActionButtonTemplate")
+        fillBtn:SetSize(150, 20)
+        fillBtn:SetFrameStrata("HIGH")
+        fillBtn:RegisterForClicks("AnyUp", "AnyDown")
+        fillBtn:SetAttribute("type", "macro")
+        UI.Fill(fillBtn, 1, 1, 1, 0.06)
+        UI.Fill(fillBtn, 1, 1, 1, 0.08, "HIGHLIGHT")
+        UI.Border(fillBtn)
+        fillBtn.text = UI.Text(fillBtn, 11, 0.9, 0.9, 0.9, "CENTER")
+        fillBtn.text:SetPoint("CENTER")
+        fillBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+            GameTooltip:SetText("Fill crate", 1, 1, 1)
+            GameTooltip:AddLine("Uses the next waylaid crate you can fill from your bags, one per click.", 0.8, 0.8, 0.8, true)
+            if self.crateName then GameTooltip:AddLine("Next: " .. self.crateName, 1, 0.82, 0.35, true) end
+            GameTooltip:Show()
+        end)
+        fillBtn:SetScript("OnLeave", UI.HideTip)
+    end
+    local c = crates[1]
+    fillBtn.crateName = c.name
+    fillBtn:SetAttribute("macrotext", ("/use %d %d"):format(c.bag, c.slot))
+    fillBtn.text:SetText(#crates > 1 and ("Fill crate (%d to fill)"):format(#crates) or "Fill crate")
+    PlaceFill()
+    fillBtn:Show()
+end
+
 local function Build()
     db.win = db.win or {}
     win = UI.Window("JaseQoLRequests", "Requests", 720, 520, db.win)
+    win.fillSpot = CreateFrame("Frame", nil, win)   -- where the Fill crate button sits
+    win.fillSpot:SetSize(150, 20)
+    win.fillSpot:SetPoint("TOPRIGHT", -12, -30)
     win.status = UI.Text(win, 11, 1, 0.82, 0.2)
     win.status:SetPoint("TOPLEFT", 12, -34)
-    win.status:SetPoint("RIGHT", -12, 0)
+    win.status:SetPoint("RIGHT", win.fillSpot, "LEFT", -8, 0)
     local panel = UI.Panel(win)
     panel:SetPoint("TOPLEFT", 10, -54)
     panel:SetPoint("BOTTOMRIGHT", -10, 10)
@@ -1257,8 +1330,18 @@ local function Build()
     function win:Refresh()
         if not self:IsShown() then return end
         self.list:SetItems(Rows(), true)
+        JQ.Try("requests: fill crate button", SyncFill)
     end
     win:SetScript("OnShow", function(self) self:Refresh() end)
+    win:HookScript("OnHide", function() JQ.Try("requests: fill crate button", SyncFill) end)
+    -- the button follows the window as it's moved or resized
+    local since = 0
+    win:HookScript("OnUpdate", function(_, elapsed)
+        since = since + elapsed
+        if since < 0.1 then return end
+        since = 0
+        if fillBtn and fillBtn:IsShown() then PlaceFill() end
+    end)
     JQ.Hub.Attach(win, "requests")
 end
 
@@ -1308,22 +1391,22 @@ local function Sum(t)
     return n
 end
 
--- "40 Rugged Leather, 6 Rune Thread" for the part of a step's items kept in
--- one place (field = "bags" / "bank" / "mail"), by name; nil when there's none
-local function PlaceList(items, field)
+-- One row per item of a step kept in one place (field = "bags" / "bank" /
+-- "mail"), by name: its icon, "40 Rugged Leather" and the place on the right.
+local function PlaceRows(lines, items, field, tag, now)
     local ids = {}
     for id, e in pairs(items) do
         if (e[field] or 0) > 0 then ids[#ids + 1] = id end
     end
-    if #ids == 0 then return nil end
     table.sort(ids, function(a, b) return ItemName(a) < ItemName(b) end)
-    local out = {}
-    for _, id in ipairs(ids) do out[#out + 1] = ItemText(id, items[id][field]) end
-    return table.concat(out, ", ")
+    for _, id in ipairs(ids) do
+        lines[#lines + 1] = { sub = true, now = now, item = id, text = ItemText(id, items[id][field]), tag = tag }
+    end
 end
 
--- { {text, now, head, sub, gap}, ... } for every open request on this realm:
--- a line per step, and under it where its items are and what to do with them
+-- { {text, now, head, sub, gap, item, tag}, ... } for every open request on
+-- this realm: a line per step, under it a row per item (where it is) and what
+-- to do with them
 local function MiniLines()
     local me = Alts.MyName()
     local lines, names = {}, {}
@@ -1361,14 +1444,11 @@ local function MiniLines()
                 lines[#lines + 1] = { now = now, gap = true, text = ("%d. %s%s"):format(n,
                     mineStep and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(s.alt)),
                     where and ("  |cff9e9ea8" .. where .. (s.town and "" or " - no bank here") .. "|r") or "") }
-                local function sub(label, text)
-                    lines[#lines + 1] = { sub = true, now = now, text = "|cffffffff" .. label .. "|r " .. text }
-                end
-                local bank, mail, bags = PlaceList(s.items, "bank"), PlaceList(s.items, "mail"), PlaceList(s.items, "bags")
-                if bank then sub("Bank: take", bank) end
-                if mail then sub(mineStep and "Your mail: take out" or "Their mail: take out", mail) end
-                if bags then sub("Already in bags:", bags) end
-                sub("Mailbox: send", ("%d item%s to %s"):format(count, count == 1 and "" or "s", NameOf(recipient)))
+                PlaceRows(lines, s.items, "bank", "take from bank", now)
+                PlaceRows(lines, s.items, "mail", mineStep and "take out of your mail" or "in their mail", now)
+                PlaceRows(lines, s.items, "bags", "in bags", now)
+                lines[#lines + 1] = { sub = true, now = now, text = ("|cffffffffMailbox:|r send %d item%s to %s"):format(
+                    count, count == 1 and "" or "s", NameOf(recipient)) }
             end
             lines[#lines + 1] = { now = #steps == 0, gap = true, text = ("%d. %s"):format(n + 1,
                 recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
@@ -1377,15 +1457,48 @@ local function MiniLines()
             lines[#lines + 1] = { head = true, text = "For " .. NameOf(recipient) }
         end
         if short and next(short) then
-            local list, more = {}, 0
-            for id, k in pairs(short) do
-                if #list < 6 then list[#list + 1] = ItemText(id, k) else more = more + 1 end
+            local ids = {}
+            for id in pairs(short) do ids[#ids + 1] = id end
+            table.sort(ids, function(a, b) return ItemName(a) < ItemName(b) end)
+            lines[#lines + 1] = { gap = true, now = true, text = "|cffff7070No alt has these|r" }
+            for i, id in ipairs(ids) do
+                if i > 6 then
+                    lines[#lines + 1] = { sub = true, text = ("and %d more - see Details"):format(#ids - 6) }
+                    break
+                end
+                lines[#lines + 1] = { sub = true, now = true, item = id, text = ItemText(id, short[id]), tag = "buy or farm" }
             end
-            lines[#lines + 1] = { gap = true, text = "|cffff7070No alt has (buy or farm):|r " .. table.concat(list, ", ")
-                .. (more > 0 and (" +" .. more .. " more") or "") }
         end
     end
     return lines
+end
+
+-- This character's own request is over: drop it and say so.
+local function FinishRequest(msg)
+    local me = Alts.MyName()
+    if not (me and RealmRequests()[me]) then return end
+    RealmRequests()[me] = nil
+    if msg then JQ.Print(msg) end
+    if win and win:IsShown() then win:Refresh() end
+    QueueMini()
+end
+
+-- Everything was sent to this character and none of it is in its mailbox any
+-- more (as the mailbox was when last looked at): the request is finished.
+-- Not decided while the mail window is open: the inbox may still be loading.
+local function CheckCollected()
+    local me = db and Alts and Alts.MyName()
+    local r = me and RequestOf(me)
+    if not r or next(r.items) or not (r.done and next(r.done)) then return end
+    if MailFrame and MailFrame:IsShown() then return end
+    local data = Alts.RealmTable()[me]
+    local mail = (data and data.mail) or {}
+    for _, sent in pairs(r.done) do
+        for id in pairs(sent) do
+            if (mail[id] or 0) > 0 then return end
+        end
+    end
+    FinishRequest("Request finished: everything has been collected.")
 end
 
 local function BuildMini()
@@ -1455,29 +1568,69 @@ local function RefreshMini()
         return
     end
     if not mini then BuildMini() end
-    -- lines wrap, so each is placed under the one before by its real height
+    -- text lines wrap, so each row is placed under the one before by its real height
     local y = 30
     for i, d in ipairs(lines) do
-        local fs = mini.lines[i]
-        if not fs then
-            fs = UI.Text(mini, 11)
-            fs:SetWordWrap(true)
-            fs:SetJustifyV("TOP")
-            mini.lines[i] = fs
+        local row = mini.lines[i]
+        if not row then
+            row = CreateFrame("Button", nil, mini)
+            UI.Fill(row, 1, 1, 1, 0.06, "HIGHLIGHT")
+            row.icon = row:CreateTexture(nil, "ARTWORK")
+            row.icon:SetSize(14, 14)
+            row.icon:SetPoint("LEFT", 1, 0)
+            row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            row.tag = UI.Text(row, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3], "RIGHT")
+            row.tag:SetPoint("RIGHT", -2, 0)
+            row.text = UI.Text(row, 11)
+            row.text:SetJustifyV("TOP")
+            row:SetScript("OnEnter", UI.ItemEnter)
+            row:SetScript("OnLeave", UI.HideTip)
+            row:SetScript("OnClick", UI.ItemClick)
+            -- dragging a row moves the popout, like dragging its background
+            row:RegisterForDrag("LeftButton")
+            row:SetScript("OnDragStart", function() mini:StartMoving() end)
+            row:SetScript("OnDragStop", function() mini:GetScript("OnDragStop")(mini) end)
+            mini.lines[i] = row
         end
         local indent = d.sub and 16 or 0
+        local w = MINI_W - 20 - indent
         if d.gap or d.head then y = y + (i > 1 and 6 or 0) end
-        fs:ClearAllPoints()
-        fs:SetPoint("TOPLEFT", 10 + indent, -y)
-        fs:SetWidth(MINI_W - 20 - indent)
-        fs:SetText(d.text)
-        if d.head or d.now then
-            fs:SetTextColor(0.9, 0.9, 0.92)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 10 + indent, -y)
+        row:SetWidth(w)
+        row.itemID = d.item
+        row.text:ClearAllPoints()
+        local h
+        if d.item then
+            row.icon:SetTexture(UI.ItemIcon(d.item))
+            row.icon:Show()
+            row.tag:SetText(d.tag or "")
+            row.tag:Show()
+            row.text:SetWordWrap(false)
+            row.text:SetPoint("LEFT", 20, 0)
+            row.text:SetPoint("RIGHT", row.tag, "LEFT", -6, 0)
+            row.text:SetText(d.text)
+            row:EnableMouse(true)
+            h = 17
         else
-            fs:SetTextColor(UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+            row.icon:Hide()
+            row.tag:Hide()
+            row.text:SetWordWrap(true)
+            row.text:SetPoint("TOPLEFT")
+            row.text:SetWidth(w)
+            row.text:SetText(d.text)
+            row:EnableMouse(false)
+            h = math.max(MINI_LINE, math.ceil(row.text:GetStringHeight() or 0))
         end
-        fs:Show()
-        y = y + math.max(MINI_LINE, math.ceil(fs:GetStringHeight() or 0)) + 2
+        if d.head or d.now then
+            row.text:SetTextColor(0.9, 0.9, 0.92)
+        else
+            row.text:SetTextColor(UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+        end
+        row:SetAlpha((d.item and not d.now) and 0.7 or 1)
+        row:SetHeight(h)
+        row:Show()
+        y = y + h + 2
     end
     for i = #lines + 1, #mini.lines do mini.lines[i]:Hide() end
 
@@ -1486,7 +1639,14 @@ local function RefreshMini()
     local mine, bank = jobs[1], false
     for _, j in ipairs(jobs) do if j.needsBank then bank = true end end
     local b = mini.action
-    if not mine then
+    local own = RequestOf(Alts.MyName())
+    if not mine and own and not next(own.items) then
+        -- everything was sent to this character: finish by hand if it's still listed
+        b.text:SetText("Done")
+        b.run = function() FinishRequest("Request finished.") end
+        b:SetEnabledLook(true)
+        b:Show()
+    elseif not mine then
         b:Hide()
     elseif bank then
         b.text:SetText("Pull from bank")
@@ -1510,6 +1670,7 @@ function QueueMini(show)
     miniQueued = true
     C_Timer.After(0.3, function()
         miniQueued = false
+        JQ.Try("requests: checking the mail was collected", CheckCollected)
         JQ.Try("request plan popout", RefreshMini)
     end)
 end
@@ -1961,7 +2122,7 @@ end
 -------------------------------------------------------------------------------
 --  Events
 -------------------------------------------------------------------------------
-local profHooked = false
+local profHooked, mailHooked = false, false
 local function HasJobs() return #MyJobs() > 0 end
 
 ev:SetScript("OnEvent", function(_, event, ...)
@@ -1994,12 +2155,13 @@ ev:SetScript("OnEvent", function(_, event, ...)
         if side and side:IsShown() then side:Refresh() end
     elseif event == "MAIL_SHOW" then
         mailOpen = true
+        -- the window closing is what settles whether the mail was collected
+        if MailFrame and not mailHooked then
+            mailHooked = true
+            MailFrame:HookScript("OnHide", function() QueueMini() end)
+        end
         if HasJobs() then JQ.Hub.Show("requests") end
     elseif event == "MAIL_CLOSED" then
-        -- everything had been sent and I've now been to a mailbox: the plan is finished
-        local me = Alts.MyName()
-        local mine = mailOpen and me and RequestOf(me)
-        if mine and not next(mine.items) then RealmRequests()[me] = nil end
         mailOpen = false
         if job then FinishSend("Mailbox closed: stopped.") end
         if win and win:IsShown() then win:Refresh() end
@@ -2032,6 +2194,8 @@ ev:SetScript("OnEvent", function(_, event, ...)
         C_Timer.After(0.4, SendNext)
     elseif event == "MAIL_FAILED" then
         if job then ClearSendMail(); FinishSend("The mail failed: stopped.") end
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        JQ.Try("requests: fill crate button", SyncFill)
     elseif event == "PLAYER_LOGIN" then
         for recipient in pairs(RealmRequests()) do Tidy(recipient) end
         C_Timer.After(3, function()
@@ -2045,8 +2209,9 @@ ev:SetScript("OnEvent", function(_, event, ...)
                 if not line:find("%.$") then line = line .. "." end
                 JQ.Print(line .. " The Requests tab has the list.")
             end
-            -- open the Requests tab straight away (not in combat, not over another JaseTools tab)
-            if not InCombatLockdown() and not (JQ.Hub.IsOpen and JQ.Hub.IsOpen()) then
+            -- the plan popout shows the job; without it, open the Requests tab
+            -- straight away (not in combat, not over another JaseTools tab)
+            if not JQ.IsEnabled(MINI_KEY) and not InCombatLockdown() and not (JQ.Hub.IsOpen and JQ.Hub.IsOpen()) then
                 JQ.Hub.Show("requests")
             end
         end)
@@ -2115,7 +2280,7 @@ JQ.byKey[KEY].onLoad = function()
     db = JaseQoLDB.altRequest
     db.requests = db.requests or {}
     db.keep = db.keep or {}
-    for _, e in ipairs({ "PLAYER_LOGIN", "TRADE_SKILL_SHOW", "TRADE_SKILL_CLOSE", "TRADE_SKILL_UPDATE",
+    for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_REGEN_ENABLED", "TRADE_SKILL_SHOW", "TRADE_SKILL_CLOSE", "TRADE_SKILL_UPDATE",
         "TRADE_SKILL_LIST_UPDATE", "MERCHANT_SHOW", "MERCHANT_UPDATE",
         "CRAFT_SHOW", "CRAFT_CLOSE", "CRAFT_UPDATE", "MAIL_SHOW", "MAIL_CLOSED", "MAIL_SEND_SUCCESS", "MAIL_FAILED",
         "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED", "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" }) do
@@ -2135,5 +2300,5 @@ end
 
 -- for tests
 JQ._AltRequest = { Breakdown = Breakdown, ScanRecipes = ScanRecipes, IsVendor = IsVendor, Plan = Plan, MyJobs = MyJobs, AddRequest = AddRequest, Remaining = Remaining,
-    PullFromBank = PullFromBank, StartSend = StartSend, Rows = Rows,
+    PullFromBank = PullFromBank, StartSend = StartSend, Rows = Rows, FillableCrates = FillableCrates,
     ParseBundles = ParseBundles, MyCrates = MyCrates, BestBundle = BestBundle, NameIndex = NameIndex }
