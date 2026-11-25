@@ -17,8 +17,11 @@
 --  Keep amounts: right-click a requested item to leave at least N on each alt.
 --
 --  JaseQoLDB.altRequest = { requests = {[realm] = {[recipient] =
---      {items = {[itemID] = {need = n, sent = n}}, recipes = {...}}}},
---    keep = {[itemID] = n}, win = {...} }
+--      {items = {[itemID] = {need = n, sent = n}}, recipes = {...},
+--       done = {[alt] = {[itemID] = n}}, own = {[itemID] = {n = n, base = n}},
+--       make = {[itemID] = {n = n, base = n}}}}},
+--    keep = {[itemID] = n}, win = {...},
+--    auto = { bank = bool, send = bool, mail = bool } (the plan popout's "auto" ticks) }
 -------------------------------------------------------------------------------
 local _, JQ = ...
 local KEY = "altRequest"
@@ -96,6 +99,7 @@ end
 -- {[id] = still needed} for a recipient
 local IsVendor   -- forward (vendor list below): vendor items are never requested
 local QueueMini  -- forward (plan popout below): redraw it shortly
+local FinishRequest  -- forward (plan popout below): this character's plan is over
 
 local function Remaining(recipient)
     local r = RequestOf(recipient)
@@ -118,7 +122,11 @@ local function Tidy(recipient)
         r.crates = nil
         -- all sent: the request stays, as "collect the mail", until none of
         -- it is left in its owner's mailbox (r.done = what each alt sent)
-        if not (r.done and next(r.done)) then RealmRequests()[recipient] = nil end
+        -- or while its owner still has a bank run of its own to do (r.own)
+        -- or something of its own to make (r.make)
+        if not (r.done and next(r.done)) and not (r.own and next(r.own)) and not (r.make and next(r.make)) then
+            RealmRequests()[recipient] = nil
+        end
     end
 end
 
@@ -134,6 +142,130 @@ local function AddRequest(recipient, wants, label)
     if label then table.insert(r.recipes, label) end
     Tidy(recipient)
     QueueMini(true)
+end
+
+-------------------------------------------------------------------------------
+--  Own bank run: what a request needs that its owner already has, but in its
+--  own bank or mail rather than its bags. r.own[id] = { n = how many to
+--  fetch, base = how many were in bags when it was asked for }.
+-------------------------------------------------------------------------------
+-- wants = {[id] = total needed}; madeInto = {[id] = the item it's a reagent of}
+-- (that part of the run is over once that item has been made).
+-- Returns how many items the bank run got.
+local function AddOwn(recipient, wants, madeInto)
+    local bags, bank, mail = Holdings(recipient)
+    local r, added = nil, 0
+    for id, need in pairs(wants or {}) do
+        local b = bags[id] or 0
+        local fetch = math.min(need, b + (bank[id] or 0) + (mail[id] or 0)) - math.min(need, b)
+        if fetch > 0 then
+            r = r or RequestOf(recipient, true)
+            r.own = r.own or {}
+            r.own[id] = { n = fetch, base = b, of = madeInto and madeInto[id] or nil }
+            added = added + fetch
+        end
+    end
+    if added > 0 then QueueMini(true) end
+    return added
+end
+
+-- What's still to fetch: { {id, bank = n, mail = n}, ... } by name. Bags (and
+-- an open bank) are counted live on the owner, as last seen on anyone else.
+local function OwnFetch(recipient)
+    local out = {}
+    local r = recipient and RequestOf(recipient)
+    if not (r and r.own) then return out end
+    local bags, bank, mail = Holdings(recipient)
+    for id, o in pairs(r.own) do
+        local left = math.max(0, (o.base or 0) + (o.n or 0) - (bags[id] or 0))
+        local fromBank = math.min(left, bank[id] or 0)
+        local fromMail = math.min(left - fromBank, mail[id] or 0)
+        if fromBank + fromMail > 0 then out[#out + 1] = { id = id, bank = fromBank, mail = fromMail } end
+    end
+    table.sort(out, function(a, b) return UI.ItemNameQuality(a.id) < UI.ItemNameQuality(b.id) end)
+    return out
+end
+
+-- To make: what the plan has its owner smelt or craft because nobody has
+-- enough of it, from reagents the plan also gathers. r.make[id] = { n = how
+-- many to make, base = how many it had (bags + bank + mail) when planned }.
+local function AddMake(recipient, makes)
+    local bags, bank, mail = Holdings(recipient)
+    local added = 0
+    for id, n in pairs(makes or {}) do
+        if n > 0 then
+            local r = RequestOf(recipient, true)
+            r.make = r.make or {}
+            r.make[id] = { n = n, base = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0) }
+            added = added + n
+        end
+    end
+    if added > 0 then QueueMini(true) end
+    return added
+end
+
+-- What's still to make: { {id, n}, ... } by name. What alts have sent of it doesn't count as made.
+local function MakeLeft(recipient)
+    local out = {}
+    local r = recipient and RequestOf(recipient)
+    if not (r and r.make) then return out end
+    local bags, bank, mail = Holdings(recipient)
+    for id, m in pairs(r.make) do
+        local sent = 0
+        for _, list in pairs(r.done or {}) do sent = sent + (list[id] or 0) end
+        local total = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0)
+        local left = (m.base or 0) + (m.n or 0) + sent - total
+        if left > 0 then out[#out + 1] = { id = id, n = math.min(left, m.n or left) } end
+    end
+    table.sort(out, function(a, b) return UI.ItemNameQuality(a.id) < UI.ItemNameQuality(b.id) end)
+    return out
+end
+
+-- From a Breakdown's rows: the bank run for everything it counts on from this
+-- character's own bank and mail (reagents of what's to be made included), and
+-- what's to be made. Returns items in the bank run, items to make.
+local function PlanOwn(recipient, rows)
+    local wants, makes, madeInto = {}, {}, {}
+    local makeAt = {}   -- [depth] = the item being made at that depth
+    for _, e in ipairs(rows or {}) do
+        wants[e.id] = (wants[e.id] or 0) + e.need
+        if e.depth > 0 and makeAt[e.depth - 1] then madeInto[e.id] = makeAt[e.depth - 1] end
+        makeAt[e.depth] = nil
+        if e.kind == "make" and (e.makeQty or 0) > 0 then
+            makes[e.id] = (makes[e.id] or 0) + e.makeQty
+            makeAt[e.depth] = e.id
+        end
+    end
+    -- what's to be made first: the bank run's reagents refer to it
+    local made = AddMake(recipient, makes)
+    return AddOwn(recipient, wants, madeInto), made
+end
+
+-- On the owner: drop what has been fetched or made (or is no longer there to
+-- fetch). Not while the mail window is open: the inbox may still be loading.
+local function TidyOwn()
+    local me = db and Alts and Alts.MyName()
+    local r = me and RequestOf(me)
+    if not (r and (r.own or r.make)) or (MailFrame and MailFrame:IsShown()) then return end
+    local changed = false
+    if r.make then
+        local still = {}
+        for _, e in ipairs(MakeLeft(me)) do still[e.id] = true end
+        for id in pairs(r.make) do
+            if not still[id] then r.make[id] = nil end
+        end
+        if not next(r.make) then r.make, changed = nil, true end
+    end
+    if r.own then
+        local still = {}
+        for _, e in ipairs(OwnFetch(me)) do still[e.id] = true end
+        for id, o in pairs(r.own) do
+            -- fetched, gone, or a reagent of something that has since been made
+            if not still[id] or (o.of and not (r.make and r.make[o.of])) then r.own[id] = nil end
+        end
+        if not next(r.own) then r.own, changed = nil, true end
+    end
+    if changed then Tidy(me) end
 end
 
 -------------------------------------------------------------------------------
@@ -220,9 +352,8 @@ local function FreeBagSlots()
     return out
 end
 
-local function PullFromBank()
-    if not Alts.IsBankOpen() then Status("Open your bank first.") return end
-    if InCombatLockdown() then return end
+-- {[id] = how many to take out of the bank}, and whether any of it is for an alt's job
+local function BankPulls()
     local want, fromBank = {}, {}
     for _, job in ipairs(MyJobs()) do
         for id, e in pairs(job.items) do
@@ -231,11 +362,26 @@ local function PullFromBank()
         end
     end
     local inBags = Live(Alts.BagIDs())
+    local pulls, forJobs = {}, false
+    for id, total in pairs(want) do
+        local n = math.min(fromBank[id] or 0, total - (inBags[id] or 0))
+        if n > 0 then pulls[id], forJobs = n, true end
+    end
+    -- this character's own bank run
+    for _, e in ipairs(OwnFetch(Alts.MyName())) do
+        if e.bank > 0 then pulls[e.id] = (pulls[e.id] or 0) + e.bank end
+    end
+    return pulls, forJobs
+end
+
+local function PullFromBank()
+    if not Alts.IsBankOpen() then Status("Open your bank first.") return end
+    if InCombatLockdown() then return end
+    local pulls, forJobs = BankPulls()
     local free = FreeBagSlots()
     local moved, short = 0, false
     ClearCursor()
-    for id, total in pairs(want) do
-        local pull = math.min(fromBank[id] or 0, total - (inBags[id] or 0))
+    for id, pull in pairs(pulls) do
         for _, bag in ipairs(Alts.BankIDs()) do
             if pull <= 0 then break end
             for slot = 1, NumSlots(bag) do
@@ -259,9 +405,10 @@ local function PullFromBank()
         end
     end
     if short then
-        Status(("Bags full: moved %d stack(s). Make room and press Pull from bank again."):format(moved))
+        Status(("Bags full: moved %d stack(s). Make room and take from the bank again."):format(moved))
     elseif moved > 0 then
-        Status(("Moved %d stack(s) from the bank. Now go to a mailbox and press Send."):format(moved))
+        Status(forJobs and ("Moved %d stack(s) from the bank. Now go to a mailbox and press Send."):format(moved)
+            or ("Moved %d stack(s) from the bank into your bags."):format(moved))
     else
         Status("Nothing to take from the bank: it's all in your bags already.")
     end
@@ -356,6 +503,122 @@ local function StartSend(recipient)
     if not next(left) then Status("Nothing to send to " .. Alts.Display(recipient)) return end
     job = { to = recipient, left = left, mails = 0 }
     SendNext()
+end
+
+-------------------------------------------------------------------------------
+--  Taking out of the mail: what the plan has in this character's mailbox -
+--  what alts sent it, its own bank run's mail part, and what a job of its own
+--  says is in its mail. One attachment at a time; mails with a COD are left.
+-------------------------------------------------------------------------------
+local taking      -- { want = {[id] = n}, n = stacks taken }
+local inboxSeen = false   -- the inbox has loaded since the mailbox was opened
+
+-- {[id] = how many to take}, never more than the mailbox held when last looked at
+local function MailWants()
+    local me = Alts.MyName()
+    local want = {}
+    local r = RequestOf(me)
+    for _, sent in pairs(r and r.done or {}) do
+        for id, n in pairs(sent) do want[id] = (want[id] or 0) + n end
+    end
+    for _, e in ipairs(OwnFetch(me)) do
+        if e.mail > 0 then want[e.id] = (want[e.id] or 0) + e.mail end
+    end
+    for _, j in ipairs(MyJobs()) do
+        for id, e in pairs(j.items) do
+            if (e.mail or 0) > 0 then want[id] = (want[id] or 0) + e.mail end
+        end
+    end
+    local data = Alts.RealmTable()[me]
+    local mail = (data and data.mail) or {}
+    for id, n in pairs(want) do
+        local have = mail[id] or 0
+        want[id] = have > 0 and math.min(n, have) or nil
+    end
+    return want
+end
+
+local TakeNext
+local function FinishTake(msg)
+    taking = nil
+    Status(msg)
+end
+
+function TakeNext()
+    if not taking then return end
+    if not (MailFrame and MailFrame:IsShown()) then return FinishTake("Mailbox closed: stopped.") end
+    if #FreeBagSlots() == 0 then
+        return FinishTake(("Bags full: took %d stack(s) out of your mail. Make room and take from the mail again."):format(taking.n))
+    end
+    local maxAttach = ATTACHMENTS_MAX_RECEIVE or 16
+    for i = (GetInboxNumItems and GetInboxNumItems() or 0), 1, -1 do
+        local _, _, _, _, _, cod = GetInboxHeaderInfo(i)
+        if (cod or 0) == 0 then
+            for a = 1, maxAttach do
+                local name, id, _, count = GetInboxItem(i, a)
+                if name and id and (taking.want[id] or 0) > 0 then
+                    taking.want[id] = taking.want[id] - (count or 1)
+                    taking.n = taking.n + 1
+                    TakeInboxItem(i, a)
+                    C_Timer.After(0.6, TakeNext)   -- the next one once this has landed
+                    return
+                end
+            end
+        end
+    end
+    FinishTake(taking.n > 0 and ("Took %d stack(s) out of your mail."):format(taking.n)
+        or "None of it is in your mail right now.")
+end
+
+local function StartTake()
+    if taking or job then return end
+    if not mailOpen then Status("Open a mailbox first.") return end
+    local want = MailWants()
+    if not next(want) then Status("None of it is in your mail right now.") return end
+    taking = { want = want, n = 0 }
+    TakeNext()
+end
+
+-------------------------------------------------------------------------------
+--  Automatic steps: with a step's "auto" ticked in the plan popout, its
+--  button presses itself when the bank or mailbox is opened - once per visit.
+-------------------------------------------------------------------------------
+local autoDone = {}
+
+local function AutoRun()
+    if not (db and db.auto and Alts and Alts.MyName()) or InCombatLockdown() then return end
+    if not (JQ.IsEnabled(KEY) and JQ.IsEnabled("requestMini")) then return end
+    local auto = db.auto
+    if not Alts.IsBankOpen() then
+        autoDone.bank = nil
+    elseif auto.bank and not autoDone.bank and next((BankPulls())) then
+        autoDone.bank = true
+        PullFromBank()
+    end
+    if not (mailOpen and MailFrame and MailFrame:IsShown()) then
+        for k in pairs(autoDone) do
+            if k ~= "bank" then autoDone[k] = nil end
+        end
+        return
+    end
+    if taking or job or not inboxSeen then return end
+    if auto.mail and not autoDone.mail and next(MailWants()) then
+        autoDone.mail = true
+        StartTake()
+        return
+    end
+    if auto.send then
+        for _, j in ipairs(MyJobs()) do
+            local inMail = 0
+            for _, e in pairs(j.items) do inMail = inMail + (e.mail or 0) end
+            -- only when it's all in the bags: nothing left in the bank or the mail
+            if not autoDone["send:" .. j.to] and not j.needsBank and inMail == 0 then
+                autoDone["send:" .. j.to] = true
+                StartSend(j.to)
+                return
+            end
+        end
+    end
 end
 
 local ev = CreateFrame("Frame")
@@ -1088,6 +1351,41 @@ local function Rows()
         end
     end
 
+    -- This character's plan as a whole: what it's for, and a way to drop all of it.
+    local plan = RequestOf(me)
+    if plan then
+        add({ head = "Plan for " .. NameOf(me) })
+        local what = (plan.recipes and #plan.recipes > 0) and table.concat(plan.recipes, ", ") or "Requested items"
+        add({ text = what, indent = true, button = "Cancel plan", enabled = true,
+              action = function() FinishRequest("Plan cancelled.") end })
+    end
+
+    -- This character's own bank run: what its requests need from its own bank or mail.
+    local ownRun = OwnFetch(me)
+    if #ownRun > 0 then
+        add({ head = "Bank run for this character" })
+        local anyBank = false
+        for _, e in ipairs(ownRun) do
+            local where = {}
+            if e.bank > 0 then where[#where + 1] = e.bank .. " in your bank"; anyBank = true end
+            if e.mail > 0 then where[#where + 1] = e.mail .. " in your mail" end
+            add({ icon = e.id, indent = true,
+                  text = ItemText(e.id, e.bank + e.mail) .. "  |cff9e9ea8(" .. table.concat(where, ", ") .. ")|r" })
+        end
+        if anyBank then
+            add({ step = "At a bank: take them out", button = "Take from bank",
+                  enabled = Alts.IsBankOpen(), action = PullFromBank })
+        end
+    end
+
+    local toMake = MakeLeft(me)
+    if #toMake > 0 then
+        add({ head = "To make on this character" })
+        for _, m in ipairs(toMake) do
+            add({ icon = m.id, indent = true, text = ItemText(m.id, m.n) .. "  |cff9e9ea8(once the materials are in your bags)|r" })
+        end
+    end
+
     -- Waylaid crates in my bags: can they be filled, and from whom.
     CrateRows(add, me)
 
@@ -1372,14 +1670,14 @@ local MINI_KEY = "requestMini"
 JQ.AddModule({
     key = MINI_KEY,
     label = "Request plan popout",
-    description = "While a request is open, a small list of the plan's steps shows on every character: who has sent, who is next, and this character's own step with its Pull from bank / Send button. Drag it to move it. Needs Request mats from alts.",
+    description = "While a request is open, a small list of the plan's steps shows on every character: your own bank run, who has sent, who is next, and this character's own step with its Take from bank / Take from mail / Send button. Tick auto on a step and its button presses itself when you open the bank or mailbox. Drag it to move it. Needs Request mats from alts.",
     default = true,
 })
 
 local MINI_W, MINI_LINE = 320, 14
 local TICK = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t"
 local MINI_EVENTS = {
-    PLAYER_LOGIN = true, BAG_UPDATE_DELAYED = true, MAIL_SHOW = true, MAIL_CLOSED = true,
+    PLAYER_LOGIN = true, BAG_UPDATE_DELAYED = true, MAIL_SHOW = true, MAIL_CLOSED = true, MAIL_INBOX_UPDATE = true,
     MAIL_SEND_SUCCESS = true, MAIL_FAILED = true, BANKFRAME_OPENED = true, BANKFRAME_CLOSED = true,
     PLAYER_INTERACTION_MANAGER_FRAME_SHOW = true, MERCHANT_SHOW = true,
 }
@@ -1389,6 +1687,318 @@ local function Sum(t)
     local n = 0
     for _, v in pairs(t or {}) do n = n + v end
     return n
+end
+
+-- Make n of an item now, in the open profession window (the plan's "make"
+-- step). Crafting needs a real click, so this only ever runs from one.
+local MINING_LINE = 186   -- the Mining skill line: its window is Smelting
+
+-------------------------------------------------------------------------------
+--  Crafting progress bar: whenever a batch is crafted in a profession window
+--  (the game's Create / Create All, Mastercraft's Craft button, the plan's
+--  "make"), one bar for the whole batch: a tick per craft, how many are done
+--  and the time left. Drag it to move it. With EllesmereUI it is also an
+--  Unlock Mode element (group "JaseTools"), like EUI's own XP and reputation
+--  bars: move it, type a width and height, match another element's size.
+--  JaseQoLDB.altRequest.bar = { w, h, pos = { point, relPoint, x, y } }
+-------------------------------------------------------------------------------
+local BAR_KEY = "craftProgress"
+JQ.AddModule({
+    key = BAR_KEY,
+    label = "Crafting progress bar",
+    description = "While you craft a batch in a profession window, a bar shows the whole batch: a tick for every craft, how many are done and the time left. Works for every craft, however it was started. Drag it to move it; with EllesmereUI, move and resize it in Unlock Mode (JaseTools > Crafting Progress) like the XP bar. Needs Request mats from alts.",
+    default = true,
+})
+
+-- The batch being made:
+-- { rid = recipe spell, name, total = crafts, done, per = seconds a craft,
+--   castStart, castEnd (GetTime), idleAt = when it last had nothing casting }
+local making
+local craftBar
+
+local function StopMaking()
+    making = nil
+end
+
+local BAR_W, BAR_H = 280, 18
+local function BarCfg()
+    db.bar = db.bar or {}
+    if db.barPos then   -- where an earlier version kept it
+        db.bar.pos = db.bar.pos or { point = db.barPos[1], relPoint = db.barPos[2], x = db.barPos[3], y = db.barPos[4] }
+        db.barPos = nil
+    end
+    return db.bar
+end
+
+-- Size and place the bar from its settings.
+local function ApplyCraftBar()
+    local bar = craftBar
+    if not bar then return end
+    local c = BarCfg()
+    local w, h = math.max(60, c.w or BAR_W), math.max(6, c.h or BAR_H)
+    bar:SetSize(w, h)
+    bar.total = nil   -- the ticks are laid out again for the new width
+    UI.SetFont(bar.text, math.max(8, math.min(14, math.floor(h - 6))))
+    bar.text:SetShown(h >= 12)
+    bar:ClearAllPoints()
+    local pos = c.pos
+    if pos and pos.point then
+        bar:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
+    else
+        bar:SetPoint("CENTER", UIParent, "CENTER", 0, -170)
+    end
+end
+
+local function BuildCraftBar()
+    local bar = CreateFrame("Frame", "JaseQoLCraftBar", UIParent)
+    craftBar = bar
+    bar:SetFrameStrata("MEDIUM")
+    bar:SetClampedToScreen(true)
+    bar:SetMovable(true)
+    bar:RegisterForDrag("LeftButton")
+    bar:SetScript("OnDragStart", bar.StartMoving)
+    bar:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local p, _, rp, x, y = self:GetPoint()
+        BarCfg().pos = { point = p, relPoint = rp, x = x, y = y }
+    end)
+    UI.Fill(bar, 0.045, 0.045, 0.05, 0.92)
+    UI.Border(bar)
+    bar.fill = bar:CreateTexture(nil, "ARTWORK")
+    bar.fill:SetPoint("TOPLEFT", 1, -1)
+    bar.fill:SetPoint("BOTTOMLEFT", 1, 1)
+    do
+        local r, g, b = UI.Accent()
+        bar.fill:SetColorTexture(r, g, b, 0.7)
+    end
+    bar.text = UI.Text(bar, 11, 1, 1, 1, "CENTER")
+    bar.text:SetPoint("LEFT", 6, 0)
+    bar.text:SetPoint("RIGHT", -6, 0)
+    bar.ticks = {}
+    function bar:Layout(total)
+        if self.total == total then return end
+        self.total = total
+        local w = self:GetWidth() - 2
+        local n = total <= 100 and total - 1 or 0   -- too many to tell apart: no ticks
+        for i = 1, n do
+            local t = self.ticks[i]
+            if not t then
+                t = self:CreateTexture(nil, "OVERLAY")
+                t:SetColorTexture(0, 0, 0, 0.65)
+                t:SetWidth(1)
+                self.ticks[i] = t
+            end
+            t:ClearAllPoints()
+            t:SetPoint("TOP", self, "TOPLEFT", 1 + w * i / total, -1)
+            t:SetPoint("BOTTOM", self, "BOTTOMLEFT", 1 + w * i / total, 1)
+            t:Show()
+        end
+        for i = n + 1, #self.ticks do self.ticks[i]:Hide() end
+    end
+    -- The bar is always there (so Unlock Mode has something to hold) and
+    -- invisible while nothing is being made; in Unlock Mode it shows a sample.
+    function bar:SetIdle(idle)
+        if self.idle == idle then return end
+        self.idle = idle
+        self:SetAlpha(idle and 0 or 1)
+        self:EnableMouse(not idle)
+    end
+    bar:SetScript("OnUpdate", function(self)
+        local m = making
+        if not m then
+            local preview = EllesmereUI and EllesmereUI._unlockActive and JQ.IsEnabled(KEY) and JQ.IsEnabled(BAR_KEY)
+            self:SetIdle(not preview)
+            if preview then
+                self:Layout(10)
+                self.fill:SetWidth(math.max(0.001, (self:GetWidth() - 2) * 0.4))
+                self.text:SetText("Crafting progress   4 / 10   0:12 left")
+            end
+            return
+        end
+        self:SetIdle(false)
+        local now = GetTime()
+        -- over: finished a moment ago, or nothing has been casting for a while
+        if (m.finished and now - m.finished > 1.5) or (not m.castStart and m.idleAt and now - m.idleAt > 2.5) then
+            StopMaking()
+            return
+        end
+        local frac = 0
+        if m.castStart and m.castEnd and m.castEnd > m.castStart then
+            frac = math.max(0, math.min(1, (now - m.castStart) / (m.castEnd - m.castStart)))
+        end
+        local done = math.min(m.total, m.done + frac)
+        self:Layout(m.total)
+        self.fill:SetWidth(math.max(0.001, (self:GetWidth() - 2) * done / m.total))
+        local left = m.per and math.ceil((m.total - done) * m.per)
+        local count = ("%d / %d"):format(m.done, m.total)
+        if left then count = count .. ("   %d:%02d left"):format(math.floor(left / 60), left % 60) end
+        self.text:SetText(m.name and (m.name .. "   " .. count) or count)
+    end)
+    ApplyCraftBar()
+    bar:SetIdle(true)
+end
+
+-- EllesmereUI's Unlock Mode: the bar as an element you can move, resize and
+-- size-match, the way EUI's XP and reputation bars are.
+local barRegistered = false
+local function RegisterCraftBar()
+    local E = EllesmereUI
+    if barRegistered or not (db and E and E.RegisterUnlockElements and E.MakeUnlockElement) then return end
+    barRegistered = true
+    if not craftBar then BuildCraftBar() end
+    local function round(v) return math.floor((v or 0) + 0.5) end
+    E:RegisterUnlockElements({
+        E.MakeUnlockElement({
+            key = "JaseTools_CraftBar",
+            label = "Crafting Progress",
+            group = "JaseTools",
+            order = 900,
+            isHidden = function() return not (JQ.IsEnabled(KEY) and JQ.IsEnabled(BAR_KEY)) end,
+            getFrame = function() return craftBar end,
+            getSize = function()
+                local c = BarCfg()
+                return c.w or BAR_W, c.h or BAR_H
+            end,
+            setWidth = function(_, w)
+                BarCfg().w = math.max(60, round(w))
+                ApplyCraftBar()
+            end,
+            setHeight = function(_, h)
+                BarCfg().h = math.max(6, round(h))
+                ApplyCraftBar()
+            end,
+            savePos = function(_, point, relPoint, x, y)
+                if not (point and x and y) then return end
+                BarCfg().pos = { point = point, relPoint = relPoint or point, x = x, y = y }
+                if not E._unlockActive then ApplyCraftBar() end
+            end,
+            loadPos = function()
+                local pos = BarCfg().pos
+                if not (pos and pos.point) then return nil end
+                return { point = pos.point, relPoint = pos.relPoint or pos.point, x = pos.x, y = pos.y }
+            end,
+            clearPos = function()
+                BarCfg().pos = nil
+                ApplyCraftBar()
+            end,
+            applyPos = function() ApplyCraftBar() end,
+        }),
+    }, "JaseQoL")
+end
+
+-- A batch of count crafts of a recipe has just been started.
+local function StartMaking(rid, count)
+    if not (db and JQ.IsEnabled(KEY) and JQ.IsEnabled(BAR_KEY)) then return end
+    local total = math.max(1, math.floor(tonumber(count) or 1))
+    local name
+    if rid and C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo then
+        local ok, info = pcall(C_TradeSkillUI.GetRecipeInfo, rid)
+        name = ok and info and info.name or nil
+    end
+    making = { rid = rid, name = name, total = total, done = 0, idleAt = GetTime() }
+    if not craftBar then BuildCraftBar() end
+    craftBar.total = nil
+    craftBar:Show()
+    craftBar:SetIdle(false)
+end
+
+-- Every way a batch gets started ends in one of these two calls.
+local craftsHooked = false
+local function HookCrafts()
+    if craftsHooked or not hooksecurefunc then return end
+    craftsHooked = true
+    if C_TradeSkillUI and C_TradeSkillUI.CraftRecipe then
+        hooksecurefunc(C_TradeSkillUI, "CraftRecipe", function(rid, count)
+            JQ.Try("crafting progress bar", StartMaking, rid, count)
+        end)
+    end
+    if DoTradeSkill then
+        hooksecurefunc("DoTradeSkill", function(_, count)
+            JQ.Try("crafting progress bar", StartMaking, nil, count)
+        end)
+    end
+end
+
+-- UNIT_SPELLCAST_* for the player while a batch is being made
+local function CastEvent(event, unit, _, spellID)
+    if not making or unit ~= "player" then return end
+    -- the first cast after starting says which spell the batch is (recipe IDs aren't always the spell)
+    if event == "UNIT_SPELLCAST_START" and not making.spell then making.spell = spellID end
+    if making.spell and spellID and spellID ~= making.spell then return end
+    local now = GetTime()
+    if event == "UNIT_SPELLCAST_START" then
+        local startMS, endMS
+        if UnitCastingInfo then
+            local _, _, _, s, e = UnitCastingInfo("player")
+            startMS, endMS = s, e
+        end
+        if startMS and endMS and endMS > startMS then
+            making.castStart, making.castEnd = startMS / 1000, endMS / 1000
+            making.per = making.castEnd - making.castStart
+        else
+            making.castStart, making.castEnd = now, now + (making.per or 2)
+        end
+        making.idleAt = nil
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        making.done = making.done + 1
+        making.castStart, making.castEnd = nil, nil
+        making.idleAt = now
+        if making.done >= making.total then
+            making.finished = now   -- the full bar stays a moment
+        end
+    else
+        -- interrupted or failed: over unless the next craft starts straight away
+        making.castStart, making.castEnd = nil, nil
+        making.idleAt = now
+    end
+end
+
+local function MakeNow(id, n)
+    if not id or InCombatLockdown() then return end
+    local name = ItemName(id)
+    local T = C_TradeSkillUI
+    if T and T.GetAllRecipeIDs and T.CraftRecipe and ProfessionsFrame then
+        local open = ProfessionsFrame:IsShown()
+        if open then
+            for _, rid in ipairs(T.GetAllRecipeIDs() or {}) do
+                local info = T.GetRecipeInfo and T.GetRecipeInfo(rid)
+                local sch = info and info.learned and T.GetRecipeSchematic and T.GetRecipeSchematic(rid, false)
+                if sch and sch.outputItemID == id then
+                    local crafts = math.ceil(n / math.max(1, sch.quantityMin or 1))
+                    local can = info.numAvailable
+                    if can and can < 1 then
+                        Status(("You can't make %s yet: the materials aren't in your bags."):format(name))
+                        return
+                    end
+                    if can then crafts = math.min(crafts, can) end
+                    T.CraftRecipe(rid, crafts)
+                    Status(("Making %d %s."):format(crafts * math.max(1, sch.quantityMin or 1), name), true)
+                    return
+                end
+            end
+        end
+        -- not in the open window (or none open): bars are smelted, so that window can be opened for you
+        if SMELT[id] and T.OpenTradeSkill and pcall(T.OpenTradeSkill, MINING_LINE) then
+            Status(("Smelting opened. Click make again to smelt %s."):format(name))
+            return
+        end
+        Status(open and ("%s isn't in the open profession window. Open the profession that makes it, then click make."):format(name)
+            or ("Open the profession that makes %s, then click make."):format(name))
+        return
+    end
+    -- the old trade skill window
+    if TradeSkillFrame and TradeSkillFrame:IsShown() and GetNumTradeSkills and DoTradeSkill then
+        for i = 1, GetNumTradeSkills() do
+            local link = GetTradeSkillItemLink and GetTradeSkillItemLink(i)
+            if link and tonumber(link:match("item:(%d+)")) == id then
+                local per = GetTradeSkillNumMade and GetTradeSkillNumMade(i) or 1
+                local crafts = math.ceil(n / math.max(1, per))
+                DoTradeSkill(i, crafts)
+                return
+            end
+        end
+    end
+    Status(("Open the profession that makes %s, then click make."):format(name))
 end
 
 -- One row per item of a step kept in one place (field = "bags" / "bank" /
@@ -1404,7 +2014,7 @@ local function PlaceRows(lines, items, field, tag, now)
     end
 end
 
--- { {text, now, head, sub, gap, item, tag}, ... } for every open request on
+-- { {text, now, head, sub, gap, item, tag, auto}, ... } for every open request on
 -- this realm: a line per step, under it a row per item (where it is) and what
 -- to do with them
 local function MiniLines()
@@ -1426,35 +2036,98 @@ local function MiniLines()
             if not inPlan[alt] then sent[#sent + 1] = alt end
         end
         table.sort(sent)
-        if #steps > 0 or #sent > 0 then
-            local total = #sent + #steps + 1
-            lines[#lines + 1] = { head = true, text = ("For %s  |cff9e9ea8step %d of %d|r"):format(
-                NameOf(recipient), math.min(#sent + 1, total), total) }
+        local own = OwnFetch(recipient)
+        local collect = #steps > 0 or #sent > 0
+        local makes = MakeLeft(recipient)
+        local total = #sent + #steps + (#own > 0 and 1 or 0) + (collect and 1 or 0) + (#makes > 0 and 1 or 0)
+        do
+            lines[#lines + 1] = { head = true, text = total > 0 and ("For %s  |cff9e9ea8step %d of %d|r"):format(
+                NameOf(recipient), math.min(#sent + 1, total), total) or ("For " .. NameOf(recipient)) }
             for _, alt in ipairs(sent) do
                 lines[#lines + 1] = { text = ("%s %s  |cff9e9ea8sent %d|r"):format(TICK, NameOf(alt), Sum(r.done[alt])) }
             end
             local n = #sent
+            -- the requester's own bank run comes first: it needs no one else
+            if #own > 0 then
+                n = n + 1
+                local mineStep = recipient == me
+                lines[#lines + 1] = { now = true, gap = true, text = ("%d. %s  |cff9e9ea8bank run|r"):format(n,
+                    mineStep and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
+                local fromBank = 0
+                for _, e in ipairs(own) do
+                    if e.bank > 0 then
+                        fromBank = fromBank + e.bank
+                        lines[#lines + 1] = { sub = true, now = true, item = e.id, text = ItemText(e.id, e.bank), tag = "in your bank" }
+                    end
+                end
+                for _, e in ipairs(own) do
+                    if e.mail > 0 then
+                        lines[#lines + 1] = { sub = true, now = true, item = e.id, text = ItemText(e.id, e.mail), tag = "take out of your mail" }
+                    end
+                end
+                if fromBank > 0 then
+                    lines[#lines + 1] = { sub = true, now = true, auto = "bank", text = mineStep
+                        and ("|cffffffffBank:|r open it and press Take from bank (%d item%s)"):format(fromBank, fromBank == 1 and "" or "s")
+                        or ("|cffffffffBank:|r take out %d item%s"):format(fromBank, fromBank == 1 and "" or "s") }
+                end
+                local fromMail = 0
+                for _, e in ipairs(own) do fromMail = fromMail + e.mail end
+                if fromMail > 0 then
+                    lines[#lines + 1] = { sub = true, now = true, auto = "mail",
+                        text = ("|cffffffffMailbox:|r take %d item%s out of the mail"):format(fromMail, fromMail == 1 and "" or "s") }
+                end
+            end
             for i, s in ipairs(steps) do
                 n = n + 1
                 local mineStep = s.alt == me
                 local now = (i == 1) or mineStep
-                local count = 0
-                for _, e in pairs(s.items) do count = count + (e.bags or 0) + (e.bank or 0) + (e.mail or 0) end
+                local count, inBank, inMail = 0, 0, 0
+                for _, e in pairs(s.items) do
+                    count = count + (e.bags or 0) + (e.bank or 0) + (e.mail or 0)
+                    inBank, inMail = inBank + (e.bank or 0), inMail + (e.mail or 0)
+                end
                 local where = not mineStep and Alts.WhereText(s.alt)
                 lines[#lines + 1] = { now = now, gap = true, text = ("%d. %s%s"):format(n,
                     mineStep and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(s.alt)),
                     where and ("  |cff9e9ea8" .. where .. (s.town and "" or " - no bank here") .. "|r") or "") }
-                PlaceRows(lines, s.items, "bank", "take from bank", now)
-                PlaceRows(lines, s.items, "mail", mineStep and "take out of your mail" or "in their mail", now)
+                PlaceRows(lines, s.items, "bank", "in the bank", now)
+                PlaceRows(lines, s.items, "mail", "in the mail", now)
                 PlaceRows(lines, s.items, "bags", "in bags", now)
-                lines[#lines + 1] = { sub = true, now = now, text = ("|cffffffffMailbox:|r send %d item%s to %s"):format(
+                if inBank > 0 then
+                    lines[#lines + 1] = { sub = true, now = now, auto = "bank",
+                        text = ("|cffffffffBank:|r take %d item%s out"):format(inBank, inBank == 1 and "" or "s") }
+                end
+                if inMail > 0 then
+                    lines[#lines + 1] = { sub = true, now = now, auto = "mail",
+                        text = ("|cffffffffMailbox:|r take %d item%s out of the mail"):format(inMail, inMail == 1 and "" or "s") }
+                end
+                lines[#lines + 1] = { sub = true, now = now, auto = "send", text = ("|cffffffffMailbox:|r send %d item%s to %s"):format(
                     count, count == 1 and "" or "s", NameOf(recipient)) }
             end
-            lines[#lines + 1] = { now = #steps == 0, gap = true, text = ("%d. %s"):format(n + 1,
-                recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
-            lines[#lines + 1] = { sub = true, now = #steps == 0, text = "|cffffffffMailbox:|r collect the mail" }
-        else
-            lines[#lines + 1] = { head = true, text = "For " .. NameOf(recipient) }
+            if collect then
+                lines[#lines + 1] = { now = #steps == 0, gap = true, text = ("%d. %s"):format(n + 1,
+                    recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
+                lines[#lines + 1] = { sub = true, now = #steps == 0, auto = "mail", text = "|cffffffffMailbox:|r collect the mail" }
+            end
+            -- last: what the requester makes itself once the materials are in its bags
+            if #makes > 0 then
+                local ready = #steps == 0 and #own == 0
+                lines[#lines + 1] = { now = ready, gap = true, text = ("%d. %s  |cff9e9ea8make|r"):format(n + (collect and 2 or 1),
+                    recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
+                for _, m in ipairs(makes) do
+                    local rec = MakeRecipe(m.id, recipient)
+                    local from = {}
+                    for rid, q in pairs(rec and rec.r or {}) do
+                        from[#from + 1] = (math.ceil(m.n / (rec.n or 1)) * q) .. " " .. ItemName(rid)
+                    end
+                    table.sort(from)
+                    lines[#lines + 1] = { sub = true, now = ready, item = m.id, text = ItemText(m.id, m.n),
+                        tag = recipient == me and "click to make" or "make", make = recipient == me and m or nil }
+                    if #from > 0 then
+                        lines[#lines + 1] = { sub = true, now = ready, text = "   from " .. table.concat(from, ", ") }
+                    end
+                end
+            end
         end
         if short and next(short) then
             local ids = {}
@@ -1474,7 +2147,7 @@ local function MiniLines()
 end
 
 -- This character's own request is over: drop it and say so.
-local function FinishRequest(msg)
+function FinishRequest(msg)
     local me = Alts.MyName()
     if not (me and RealmRequests()[me]) then return end
     RealmRequests()[me] = nil
@@ -1498,7 +2171,51 @@ local function CheckCollected()
             if (mail[id] or 0) > 0 then return end
         end
     end
+    if r.own and next(r.own) then
+        -- the mail is in; the bank run is still to do
+        r.done = nil
+        JQ.Print("Everything sent has been collected. Your own bank run is still on the plan.")
+        return
+    end
     FinishRequest("Request finished: everything has been collected.")
+end
+
+-- The "auto" tick at the right of an action line. One setting per kind of
+-- action (bank / mail / send): every line of that kind shows the same tick.
+local AUTO_TIP = {
+    bank = "Takes the items out of the bank by itself as soon as you open the bank.",
+    mail = "Takes the items out of the mail by itself as soon as you open a mailbox.",
+    send = "Sends the mail by itself as soon as you open a mailbox, once everything is in your bags.",
+}
+local function AutoCheck(row)
+    local c = CreateFrame("Button", nil, row)
+    c:SetSize(46, 14)
+    c:SetPoint("TOPRIGHT", 0, 0)
+    c.box = CreateFrame("Frame", nil, c)
+    c.box:SetSize(11, 11)
+    c.box:SetPoint("RIGHT", -1, 0)
+    UI.Fill(c.box, 0, 0, 0, 0.5)
+    UI.Border(c.box)
+    c.tick = c.box:CreateTexture(nil, "OVERLAY")
+    c.tick:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+    c.tick:SetPoint("TOPLEFT", -2, 2)
+    c.tick:SetPoint("BOTTOMRIGHT", 2, -2)
+    c.label = UI.Text(c, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3], "RIGHT")
+    c.label:SetPoint("RIGHT", c.box, "LEFT", -4, 0)
+    c.label:SetText("auto")
+    c:SetScript("OnClick", function(self)
+        db.auto[self.kind] = (not db.auto[self.kind]) or nil
+        QueueMini()
+    end)
+    c:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Automatic", 1, 1, 1)
+        GameTooltip:AddLine(AUTO_TIP[self.kind] or "", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("One switch for every step of this kind, on all your characters.", 0.62, 0.62, 0.66, true)
+        GameTooltip:Show()
+    end)
+    c:SetScript("OnLeave", UI.HideTip)
+    return c
 end
 
 local function BuildMini()
@@ -1585,7 +2302,14 @@ local function RefreshMini()
             row.text:SetJustifyV("TOP")
             row:SetScript("OnEnter", UI.ItemEnter)
             row:SetScript("OnLeave", UI.HideTip)
-            row:SetScript("OnClick", UI.ItemClick)
+            row:SetScript("OnClick", function(self)
+                -- a "make" row crafts; any other item row links the item with shift
+                if self.make and not IsModifiedClick("CHATLINK") then
+                    JQ.Try("request plan popout: make", MakeNow, self.make.id, self.make.n)
+                else
+                    UI.ItemClick(self)
+                end
+            end)
             -- dragging a row moves the popout, like dragging its background
             row:RegisterForDrag("LeftButton")
             row:SetScript("OnDragStart", function() mini:StartMoving() end)
@@ -1599,6 +2323,7 @@ local function RefreshMini()
         row:SetPoint("TOPLEFT", 10 + indent, -y)
         row:SetWidth(w)
         row.itemID = d.item
+        row.make = d.make
         row.text:ClearAllPoints()
         local h
         if d.item then
@@ -1617,10 +2342,18 @@ local function RefreshMini()
             row.tag:Hide()
             row.text:SetWordWrap(true)
             row.text:SetPoint("TOPLEFT")
-            row.text:SetWidth(w)
+            row.text:SetWidth(w - (d.auto and 50 or 0))
             row.text:SetText(d.text)
             row:EnableMouse(false)
             h = math.max(MINI_LINE, math.ceil(row.text:GetStringHeight() or 0))
+        end
+        if d.auto then
+            row.check = row.check or AutoCheck(row)
+            row.check.kind = d.auto
+            row.check.tick:SetShown(db.auto[d.auto] and true or false)
+            row.check:Show()
+        elseif row.check then
+            row.check:Hide()
         end
         if d.head or d.now then
             row.text:SetTextColor(0.9, 0.9, 0.92)
@@ -1635,29 +2368,40 @@ local function RefreshMini()
     for i = #lines + 1, #mini.lines do mini.lines[i]:Hide() end
 
     -- this character's step, as one button
-    local jobs = MyJobs()
-    local mine, bank = jobs[1], false
-    for _, j in ipairs(jobs) do if j.needsBank then bank = true end end
+    local mine = MyJobs()[1]
     local b = mini.action
-    local own = RequestOf(Alts.MyName())
-    if not mine and own and not next(own.items) then
-        -- everything was sent to this character: finish by hand if it's still listed
-        b.text:SetText("Done")
-        b.run = function() FinishRequest("Request finished.") end
-        b:SetEnabledLook(true)
-        b:Show()
-    elseif not mine then
-        b:Hide()
-    elseif bank then
-        b.text:SetText("Pull from bank")
-        b.run = PullFromBank
-        b:SetEnabledLook(Alts.IsBankOpen() and true or false)
+    local req = RequestOf(Alts.MyName())
+    local cands = {}
+    if next((BankPulls())) then
+        -- for an alt's job or this character's own bank run: one press moves it all
+        cands[#cands + 1] = { "Take from bank", PullFromBank, Alts.IsBankOpen() }
+    end
+    if next(MailWants()) then
+        cands[#cands + 1] = { "Take from mail", StartTake, mailOpen and not taking and not job }
+    end
+    if mine then
+        cands[#cands + 1] = { "Send", function() StartSend(mine.to) end, mailOpen and not job and not taking }
+    end
+    local toMake = MakeLeft(Alts.MyName())[1]
+    if toMake then
+        cands[#cands + 1] = { ("Make %d"):format(toMake.n), function() MakeNow(toMake.id, toMake.n) end, true }
+    end
+    if #cands == 0 and req and not next(req.items) then
+        -- nothing left for anyone to send: finish by hand if it's still listed
+        cands[1] = { "Done", function() FinishRequest("Request finished.") end, true }
+    end
+    -- what can be done right here first; making comes last, once nothing is left to fetch
+    local pick = cands[1]
+    for _, c in ipairs(cands) do
+        if c[3] and (c ~= cands[#cands] or not toMake or #cands == 1) then pick = c; break end
+    end
+    if pick then
+        b.text:SetText(pick[1])
+        b.run = pick[2]
+        b:SetEnabledLook(pick[3] and true or false)
         b:Show()
     else
-        b.text:SetText("Send")
-        b.run = function() StartSend(mine.to) end
-        b:SetEnabledLook((mailOpen and not job) and true or false)
-        b:Show()
+        b:Hide()
     end
     mini:SetHeight(y + 38)
     mini:Show()
@@ -1670,7 +2414,9 @@ function QueueMini(show)
     miniQueued = true
     C_Timer.After(0.3, function()
         miniQueued = false
+        JQ.Try("requests: checking the bank run", TidyOwn)
         JQ.Try("requests: checking the mail was collected", CheckCollected)
+        JQ.Try("requests: automatic steps", AutoRun)
         JQ.Try("request plan popout", RefreshMini)
     end)
 end
@@ -1893,9 +2639,14 @@ local function Breakdown(list, crafts)
         local still = short - fromAlts
         if still <= 0 then row.kind = "alts"; return end
         local rec = idx[id]
+        if not (rec and rec.r) then
+            -- not read from a profession window yet: smelting is known up front
+            local known, can = MakeRecipe(id, me)
+            if known and can then rec = { n = known.n, r = known.r, by = { [me] = true } } end
+        end
         if rec and rec.r and depth < 3 and not seen[id] then
             local makes = math.ceil(still / (rec.n or 1))
-            row.kind, row.make = "make", makes
+            row.kind, row.make, row.makeQty = "make", makes, still
             row.maker = rec.by and (rec.by[me] and "you" or next(rec.by)) or nil
             seen[id] = true
             for rid, q in pairs(rec.r) do walk(rid, q * makes, depth + 1, seen) end
@@ -1991,6 +2742,8 @@ local function BuildSide(parent)
         local name, short = side.recipeName, side.short
         if not (short and next(short)) then return end
         local n = tonumber(side.qty:GetText()) or 1
+        local _, reagents = Reagents()
+        PlanOwn(Alts.MyName(), (Breakdown(reagents or {}, n)))
         AddRequest(Alts.MyName(), short, (name or "?") .. " x" .. n)
         local parts = {}
         for id, k in pairs(short) do parts[#parts + 1] = ItemText(id, k) end
@@ -2127,6 +2880,11 @@ local function HasJobs() return #MyJobs() > 0 end
 
 ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
+    if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED"
+        or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
+        if making then JQ.Try("crafting progress bar", CastEvent, event, ...) end
+        return
+    end
     if MINI_EVENTS[event] then QueueMini() end
     if event == "MERCHANT_SHOW" or event == "MERCHANT_UPDATE" then
         JQ.Try("requests: learning vendor items", LearnVendor)
@@ -2161,8 +2919,10 @@ ev:SetScript("OnEvent", function(_, event, ...)
             MailFrame:HookScript("OnHide", function() QueueMini() end)
         end
         if HasJobs() then JQ.Hub.Show("requests") end
+    elseif event == "MAIL_INBOX_UPDATE" then
+        inboxSeen = true
     elseif event == "MAIL_CLOSED" then
-        mailOpen = false
+        mailOpen, inboxSeen, taking = false, false, nil
         if job then FinishSend("Mailbox closed: stopped.") end
         if win and win:IsShown() then win:Refresh() end
     elseif event == "BANKFRAME_OPENED" or (event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW"
@@ -2197,6 +2957,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
     elseif event == "PLAYER_REGEN_ENABLED" then
         JQ.Try("requests: fill crate button", SyncFill)
     elseif event == "PLAYER_LOGIN" then
+        JQ.Try("crafting progress bar: EllesmereUI unlock mode", RegisterCraftBar)
         for recipient in pairs(RealmRequests()) do Tidy(recipient) end
         C_Timer.After(3, function()
             local jobs = MyJobs()
@@ -2280,9 +3041,12 @@ JQ.byKey[KEY].onLoad = function()
     db = JaseQoLDB.altRequest
     db.requests = db.requests or {}
     db.keep = db.keep or {}
+    db.auto = db.auto or {}
+    HookCrafts()
     for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_REGEN_ENABLED", "TRADE_SKILL_SHOW", "TRADE_SKILL_CLOSE", "TRADE_SKILL_UPDATE",
         "TRADE_SKILL_LIST_UPDATE", "MERCHANT_SHOW", "MERCHANT_UPDATE",
-        "CRAFT_SHOW", "CRAFT_CLOSE", "CRAFT_UPDATE", "MAIL_SHOW", "MAIL_CLOSED", "MAIL_SEND_SUCCESS", "MAIL_FAILED",
+        "CRAFT_SHOW", "CRAFT_CLOSE", "CRAFT_UPDATE", "MAIL_SHOW", "MAIL_CLOSED", "MAIL_INBOX_UPDATE", "MAIL_SEND_SUCCESS", "MAIL_FAILED",
+        "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED",
         "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED", "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" }) do
         pcall(ev.RegisterEvent, ev, e)
     end
@@ -2296,9 +3060,20 @@ JQ.byKey[KEY].onDisable = function()
     HideSide()
     if win then win:Hide() end
     if mini then mini:Hide() end
+    StopMaking()
 end
+JQ.byKey[BAR_KEY].onDisable = function() StopMaking() end
+JQ.byKey[BAR_KEY].onEnable = function() JQ.Try("crafting progress bar: EllesmereUI unlock mode", RegisterCraftBar) end
+
+-- for other modules (Mastercraft's Request from alts button)
+JQ.Requests = { Breakdown = Breakdown, AddRequest = AddRequest, RequestOf = RequestOf, BuyList = BuyList,
+    AddOwn = AddOwn, OwnFetch = OwnFetch, Holdings = Holdings, PlanOwn = PlanOwn, MakeLeft = MakeLeft,
+    MakeShoppingList = MakeShoppingList, ShoppingListAPI = ShoppingListAPI, ItemText = ItemText, NameIndex = NameIndex }
 
 -- for tests
 JQ._AltRequest = { Breakdown = Breakdown, ScanRecipes = ScanRecipes, IsVendor = IsVendor, Plan = Plan, MyJobs = MyJobs, AddRequest = AddRequest, Remaining = Remaining,
     PullFromBank = PullFromBank, StartSend = StartSend, Rows = Rows, FillableCrates = FillableCrates,
+    MailWants = MailWants, BankPulls = BankPulls, AutoRun = AutoRun, MakeNow = MakeNow,
+    Making = function() return making end, StartMaking = StartMaking, CastEvent = CastEvent,
+    RegisterCraftBar = RegisterCraftBar,
     ParseBundles = ParseBundles, MyCrates = MyCrates, BestBundle = BestBundle, NameIndex = NameIndex }

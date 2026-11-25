@@ -2,6 +2,20 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.11.0 - 2026-11-25
+
+### New
+- **Plan mats in Mastercraft** - the step shown in Mastercraft > Professions gets a **Plan mats** button on its NEEDS tile. One click plans everything the step still needs: a bank run for what's in your own bank or mail, a request to your alts for the rest, and the buy list (an Auctionator shopping list when Auctionator is installed) for what nobody has. Hover it to see where each material will come from. Clicking it again plans the step afresh. Has its own switch (`/jq mcRequest`).
+- **Bank runs** - what a plan needs from the requesting character's own bank or mail is now a step of its own, with a **Take from bank** button that moves exactly the planned amounts into your bags in one press. The profession window's Request button plans it too.
+- **Make what's missing** - when nobody has enough of something you can smelt or craft, the plan gathers what it's made from and adds a **make** step: for example bars from the ore in your bank. Click the make row (or the **Make** button) to craft it in the open profession window; for bars the Smelting window is opened for you. Smelting is known without opening the window first.
+- **Take from mail** - a button that takes just the plan's items out of your mailbox, one attachment at a time. Mail with a COD is left alone.
+- **Auto ticks on plan steps** - every bank, mail and send line in the request plan has an **auto** tick. Ticked, that kind of step does itself when you open the bank or mailbox: takes from the bank, takes from the mail, sends the mail (once everything is in your bags). One tick per kind of step, for all characters; off by default.
+- **Crafting progress bar** - while you craft a batch in a profession window, however it was started, a bar shows the whole batch: a tick for every craft, how many are done and the time left. Drag it to move it. With EllesmereUI it is an Unlock Mode element (JaseTools > Crafting Progress) that you can move, resize and size-match like the XP bar. Has its own switch (`/jq craftProgress`).
+- **Cancel plan** - the Requests tab starts with what your plan is for and a **Cancel plan** button that drops all of it.
+
+### Changed
+- **Request plan button** - the popout's button now offers whatever can be done where you are: Take from bank at a bank, Take from mail or Send at a mailbox, Make once everything is fetched.
+
 ## v1.10.0 - 2026-11-25
 
 ### New
