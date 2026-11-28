@@ -58,6 +58,8 @@ local byOut = {}           -- [item made] = recipe
 local byName = {}
 local selected             -- recipe id
 local pending = false
+local RefreshDetail, RefreshGuide   -- forward (below)
+local PlanGuideStep, NextOrderEntry, SetTab   -- forward (the guide, below)
 
 -- Skill lines, to switch profession from this window (the game's own tabs are out of sight).
 local LINES = {
@@ -292,9 +294,17 @@ local function ListItems()
         if show then shown[#shown + 1] = { r = r, can = can } end
     end
     local items = {}
+    if db.sort == "gpd" and not (JQ.Market and JQ.Market.On()) then db.sort = "desc" end
     if db.sort then
-        -- by the profit of one craft; what has no price goes last
-        for _, e in ipairs(shown) do e.profit = RecipeProfit(e.r) end
+        -- by the profit of one craft, or by the sales advisor's gold a day
+        -- (Sales ledger); what has no price goes last
+        for _, e in ipairs(shown) do
+            if db.sort == "gpd" then
+                e.profit = e.r.out and JQ.Market.Score(e.r.out) or nil
+            else
+                e.profit = RecipeProfit(e.r)
+            end
+        end
         table.sort(shown, function(a, b)
             local pa, pb = a.profit, b.profit
             if (pa == nil) ~= (pb == nil) then return pa ~= nil end
@@ -486,15 +496,46 @@ local function RowEnter(self)
                 GameTooltip:AddLine("No auction price yet.", 0.62, 0.62, 0.66)
             end
         end
+        -- can be made: plans may make it, or always buy it (right-click)
+        local R = JQ.Requests
+        if R.MakeRecipe(self.itemID, JQ.Alts.MyName()) and R.BuyOnly then
+            if not JQ.IsEnabled("planSubMats") then
+                GameTooltip:AddLine("Plans buy it: Plans make sub-materials is off.", 1, 0.82, 0.35, true)
+            elseif R.BuyOnly(self.itemID) then
+                GameTooltip:AddLine("Plans always buy it. Right-click: let plans make it again.", 1, 0.82, 0.35, true)
+            else
+                GameTooltip:AddLine("Right-click: plans always buy it, never make it.", 0.62, 0.62, 0.66, true)
+            end
+        end
     end
     GameTooltip:Show()
 end
 
+-- Right-click on a material: always buy it rather than make it in plans (or undo that).
+local function RowRightClick(self)
+    local R = JQ.Requests
+    if not (self.itemID and R and R.ToggleBuyOnly and R.MakeRecipe(self.itemID, JQ.Alts.MyName())) then return end
+    R.ToggleBuyOnly(self.itemID)
+    RefreshDetail()
+    if db.tab == "guide" then RefreshGuide() end
+    if GameTooltip:IsOwned(self) then RowEnter(self) end
+end
+
+-- where a material comes from, as a small icon and a word
+local ICON = {
+    bags = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t",
+    bank = "|TInterface\\Minimap\\Tracking\\Banker:12:12|t",
+    alts = "|TInterface\\Minimap\\Tracking\\Mailbox:12:12|t",
+    make = "|TInterface\\Icons\\Trade_BlackSmithing:12:12:0:0:64:64:5:59:5:59|t",
+    buy = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12|t",
+    vendor = "|TInterface\\GossipFrame\\VendorGossipIcon:12:12|t",
+}
 local KIND_TEXT = {
-    ok = "", alts = "|cffffd25afrom alts|r", vendor = "|cff9e9ea8vendor|r", missing = "|cffff7070buy|r",
+    ok = ICON.bags .. " |cff59d959in bags|r", alts = ICON.alts .. " |cffffd25afrom alts|r",
+    vendor = ICON.vendor .. " |cff9e9ea8vendor|r", missing = ICON.buy .. " |cffff7070buy|r",
 }
 
-local function RefreshDetail()
+function RefreshDetail()
     local d = win.detail
     local r = selected and byID[selected]
     if not r then
@@ -539,9 +580,9 @@ local function RefreshDetail()
             local inBags = bags[e.id] or 0
             local tag = KIND_TEXT[e.kind] or ""
             if e.kind == "make" then
-                tag = ("|cffffd25amake %d|r"):format(e.makeQty or 0)
+                tag = ICON.make .. (" |cffffd25amake %d|r"):format(e.makeQty or 0)
             elseif e.kind == "ok" and inBags < e.need then
-                tag = "|cffffd25ayour bank / mail|r"
+                tag = ICON.bank .. " |cffffd25ayour bank / mail|r"
             end
             row.need = e.need
             local cost, how = BestCost(e.id, e.need, 0, {})
@@ -580,6 +621,16 @@ local function RefreshDetail()
     d.makeAll:SetEnabledLook(can > 0 and not miss)
     d.missing = miss
     d.plan:SetEnabledLook(#r.reagents > 0 and R ~= nil)
+    if d.subBtn then
+        local on = JQ.IsEnabled("planSubMats")
+        d.subBtn.text:SetText(on and "Sub-mats: make" or "Sub-mats: buy")
+        d.subBtn:SetOn(not on)
+    end
+    -- in your plan: how many of it the plan still has to make
+    local left = R and R.GoalLeft and r.out and R.GoalLeft(r.out)
+    if left and left > 0 then
+        d.sub:SetText(d.sub:GetText() .. ("  •  |cff%sin your plan: make %d|r"):format(UI.AccentHex(), left))
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -609,7 +660,7 @@ local function PickInGame(rid)
 end
 
 -- Make n of a recipe (a click must have led here). Returns true when a craft was asked for.
-local function CraftNow(rid, n, name)
+local function CraftNow(rid, n, name, quiet)
     n = math.max(1, math.floor(n or 1))
     local f = Blizzard()
     local page = f and f.CraftingPage
@@ -630,7 +681,7 @@ local function CraftNow(rid, n, name)
             asked = true
         end
     end
-    if asked then
+    if asked and not quiet then
         local at = GetTime()
         craftWatch = { name = name or "it", at = at }
         C_Timer.After(1.5, function()
@@ -643,13 +694,34 @@ local function CraftNow(rid, n, name)
     return asked
 end
 
-local function Select(id)
+-- crafts: put that count in the Crafts box. Without it, a recipe your plan
+-- is for gets the crafts the plan still has to make.
+local function Select(id, crafts)
     selected = id
     JQ.Try("professions window: pick in the game's window", PickInGame, id)
+    if not crafts then
+        local r = byID[id]
+        local left = r and r.out and JQ.Requests and JQ.Requests.GoalLeft and JQ.Requests.GoalLeft(r.out)
+        if left and left > 0 then crafts = math.ceil(left / math.max(1, r.per or 1)) end
+    end
+    if crafts and win then win.count:SetText(tostring(math.max(1, math.floor(crafts)))) end
     if win and win:IsShown() then
         win.list:Render()
         RefreshDetail()
     end
+end
+
+-- A row of the guide's order of work: pick its recipe in the middle with the
+-- crafts the guide asks for, ready for Make or Plan mats.
+local function PickFromGuide(e)
+    if not e then return end
+    local r = e.recipe
+    if not r then
+        JQ.Print(("%s is made in another profession: its Make button opens that one."):format((UI.ItemNameQuality(e.id))))
+        return
+    end
+    local crafts = e.main and e.need or math.ceil(((e.make or 0) > 0 and e.make or e.need) / math.max(1, r.per or 1))
+    Select(r.id, crafts)
 end
 
 local function Make(all)
@@ -664,12 +736,66 @@ local function Make(all)
     CraftNow(r.id, all and can or math.min(Crafts(), can), r.name)
 end
 
-local function Plan()
+-- who: plan it for that character (its alts send to it, it makes it); this one by default
+local function Plan(who)
     local r = selected and byID[selected]
-    if not (r and JQ.Requests and JQ.Requests.PlanFor) then return end
+    local R = JQ.Requests
+    if not (r and R and R.PlanFor) then return end
     local n = Crafts()
-    JQ.Requests.PlanFor((n > 1 and (n .. "x ") or "") .. r.name, ReagentList(r), n, r.name)
-    RefreshDetail()
+    local plan = R.PlanConfirm or R.PlanFor
+    plan((n > 1 and (n .. "x ") or "") .. r.name, ReagentList(r), n, r.name,
+        r.out and { id = r.out, n = n * math.max(1, r.per or 1) } or nil, who, function()
+            if win and win:IsShown() then RefreshDetail() end
+        end)
+end
+
+-- Right-click on Plan mats: the characters known to make it, to plan it for one of them.
+local planMenu
+local function PlanForMenu(anchor)
+    local r = selected and byID[selected]
+    local R = JQ.Requests
+    if not (r and r.out and R and R.Makers) then return end
+    local me = JQ.Alts.MyName()
+    local who = R.Makers(r.out)
+    local others = {}
+    for _, name in ipairs(who) do if name ~= me then others[#others + 1] = name end end
+    if #others == 0 then
+        JQ.Print(("No other character is known to make %s yet: open the profession on that character once and JaseTools learns it."):format(r.name))
+        return
+    end
+    if not planMenu then
+        planMenu = UI.Panel(win)
+        planMenu:SetFrameStrata("DIALOG")
+        planMenu.buttons = {}
+        planMenu.head = UI.Text(planMenu, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
+        planMenu.head:SetPoint("TOPLEFT", 8, -6)
+        planMenu.head:SetText("Plan it for")
+    end
+    for _, b in ipairs(planMenu.buttons) do b:Hide() end
+    for i, name in ipairs(others) do
+        local b = planMenu.buttons[i]
+        if not b then
+            b = UI.Button(planMenu, "", 140, 20)
+            b:SetPoint("TOPLEFT", 6, -20 - (i - 1) * 22)
+            b:SetScript("OnClick", function(self)
+                planMenu:Hide()
+                JQ.Try("professions window: plan for", Plan, self.who)
+            end)
+            planMenu.buttons[i] = b
+        end
+        b.who = name
+        b.text:SetText(JQ.Alts.Display(name))
+        b:Show()
+    end
+    planMenu:SetSize(152, 26 + #others * 22)
+    planMenu:ClearAllPoints()
+    planMenu:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
+    planMenu:Show()
+    -- gone after a while, or when the mouse leaves it
+    planMenu.at = GetTime()
+    planMenu:SetScript("OnUpdate", function(self)
+        if GetTime() - self.at > 1 and not self:IsMouseOver() and not anchor:IsMouseOver() then self:Hide() end
+    end)
 end
 
 -------------------------------------------------------------------------------
@@ -888,6 +1014,7 @@ local function WorkOrder(main, crafts)
             end
         end
         if not per then return end
+        if R.MakeAllowed and not R.MakeAllowed(id) then return end   -- to buy, not make (Plans make sub-materials)
         local have = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0)
         local e = { id = id, need = qty, have = have, make = math.max(0, qty - have), recipe = sub, other = other, per = per }
         if e.make > 0 and depth < 3 then
@@ -926,7 +1053,28 @@ local function MakeOrderEntry(e)
     end
 end
 
-local function RefreshGuide()
+local SKIP_UNDO = 15   -- seconds Undo skip takes back just the last one
+
+-- Plan one guide step (its main craft as the plan's goal), after the confirm box.
+function PlanGuideStep(main, crafts, label)
+    local R = JQ.Requests
+    if not (main and R and R.PlanFor) then return end
+    local list = {}
+    for _, g in ipairs(main.reagents) do list[#list + 1] = { id = g.id, per = g.per } end
+    local plan = R.PlanConfirm or R.PlanFor
+    plan(label, list, crafts, main.name, main.out and { id = main.out, n = crafts * math.max(1, main.per or 1) } or nil, nil,
+        function() JQ.Try("professions window: tab", SetTab, "plan") end)
+end
+
+-- The next thing to make in an order of work: the first sub-craft still short, then the main craft.
+function NextOrderEntry(order)
+    for _, e in ipairs(order or {}) do
+        if e.main then return e end
+        if (e.make or 0) > 0 and (e.recipe or e.other) then return e end
+    end
+end
+
+function RefreshGuide()
     local card = win and win.guideCard
     if not card or db.tab ~= "guide" then return end
     win.theirBtn.text:SetText(db.theirGuide and "Back to the work order" or "Mastercraft's own panel")
@@ -944,6 +1092,11 @@ local function RefreshGuide()
     card.skipBtn:Hide()
     card.unskipBtn:Hide()
     card.learnBtn:Hide()
+    card.nextPlanBtn:Hide()
+    card.makeNext:Hide()
+    card.skillBg:Hide()
+    card.skillBar:Hide()
+    card.order = nil
     local g = EnsureGuide()
     local info = ProfessionInfo()
     local skill = info and info.skillLevel or 0
@@ -962,7 +1115,8 @@ local function RefreshGuide()
     for _ in pairs(skipped) do nSkipped = nSkipped + 1 end
     card.guide = g
     if nSkipped > 0 then
-        card.unskipBtn.text:SetText(("Undo skips (%d)"):format(nSkipped))
+        local last = card.lastSkip
+        card.unskipBtn.text:SetText((last and GetTime() - last.at <= SKIP_UNDO) and "Undo skip" or ("Undo skips (%d)"):format(nSkipped))
         card.unskipBtn:Show()
     end
     local step, nextStep, crafts = GuideStep(g, skill, skipped)
@@ -979,7 +1133,18 @@ local function RefreshGuide()
         card.next:SetText("")
         return
     end
-    card.head:SetText(("|cff%sNOW|r  |cff9e9ea8skill %d - %d|r"):format(UI.AccentHex(), step.min, step.max))
+    card.head:SetText(("|cff%sNOW|r  |cff9e9ea8skill %d - %d|r  |cffffffff%d|r"):format(UI.AccentHex(), step.min, step.max, skill))
+    -- how far into this step your skill is
+    do
+        local span = math.max(1, step.max - step.min)
+        local frac = math.max(0, math.min(1, (skill - step.min) / span))
+        local ar, ag, ab = UI.Accent()
+        card.skillBar:SetColorTexture(ar, ag, ab, 0.9)
+        card.skillBg:Show()
+        local w = card.skillBg:GetWidth() or 0
+        card.skillBar:SetWidth(math.max(0.01, w * frac))
+        card.skillBar:SetShown(frac > 0 and w > 0)
+    end
     local main = step.title and byName[step.title]
     if not main then
         card.title:SetText(tostring(step.title or "?"))
@@ -1005,6 +1170,7 @@ local function RefreshGuide()
         if e then
             row.entry = e
             local r = e.recipe
+            row.sel:SetShown(r ~= nil and r.id == selected)
             if e.main then
                 local can = CanMake(r)
                 row.itemID = r.out
@@ -1045,11 +1211,20 @@ local function RefreshGuide()
     card.planBtn.label = (crafts > 1 and (crafts .. "x ") or "") .. main.name .. " (guide)"
     card.planBtn.main, card.planBtn.crafts = main, crafts
     card.planBtn:Show()
+    card.makeNext:Show()
+    -- the next step: into the same plan, when its recipe is known here
+    local nextMain = nextStep and nextStep.title and byName[nextStep.title]
+    if nextMain and #nextMain.reagents > 0 then
+        local n = math.max(1, nextStep.count or 1)
+        card.nextPlanBtn.main, card.nextPlanBtn.crafts = nextMain, n
+        card.nextPlanBtn.label = (n > 1 and (n .. "x ") or "") .. nextMain.name .. " (guide)"
+        card.nextPlanBtn:Show()
+    end
     card.next:SetText(nextStep and ("|cff9e9ea8Next: %d+  %s|r"):format(nextStep.min or 0, tostring(nextStep.title or "")) or "")
 end
 
 -- The right column's tabs: Plan (the docked request plan) or Guide (the step as an order of work).
-local function SetTab(tab)
+function SetTab(tab)
     local hasMC = HasMastercraft()
     if tab == "guide" and not hasMC then tab = "plan" end
     db.tab = tab
@@ -1090,7 +1265,7 @@ local function Queue()
     C_Timer.After(0.15, function() JQ.Try("professions window", Refresh) end)
 end
 
-local SORT_LABEL = { desc = "Profit: high first", asc = "Profit: low first" }
+local SORT_LABEL = { desc = "Profit: high first", asc = "Profit: low first", gpd = "Gold a day: best" }
 
 local function Chip(parent, label, key)
     local b = UI.Button(parent, label, 80, 20)
@@ -1132,7 +1307,9 @@ local function Build()
     win.sortBtn:SetPoint("LEFT", win.chipUps, "RIGHT", 4, 0)
     win.sortBtn:SetOn(db.sort ~= nil)
     win.sortBtn:SetScript("OnClick", function(self)
-        db.sort = (db.sort == nil and "desc") or (db.sort == "desc" and "asc") or nil
+        local advisor = JQ.Market and JQ.Market.On()
+        db.sort = (db.sort == nil and "desc") or (db.sort == "desc" and "asc")
+            or (db.sort == "asc" and advisor and "gpd") or nil
         self.text:SetText(SORT_LABEL[db.sort] or "Sort: game order")
         self:SetOn(db.sort ~= nil)
         win.list:SetItems(ListItems())
@@ -1274,13 +1451,18 @@ local function Build()
     win.clearBtn = UI.Button(right, "Clear plan", 90, 20)
     win.clearBtn:SetPoint("TOPRIGHT", 0, 0)
     win.clearBtn:SetScript("OnClick", function()
-        if JQ.Requests and JQ.Requests.Cancel then JQ.Requests.Cancel() end
+        local R = JQ.Requests
+        if R and R.CanUndoCancel and R.CanUndoCancel() then
+            R.UndoCancel()
+        elseif R and R.Cancel then
+            R.Cancel()
+        end
         RefreshDetail()
     end)
     win.clearBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Clear plan", 1, 1, 1)
-        GameTooltip:AddLine("Drops this character's whole plan: what it asked alts for, its bank run and what it was going to make. Nothing already sent is taken back.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Drops this character's whole plan: what it asked alts for, its bank run and what it was going to make. Nothing already sent is taken back. For a few seconds after, the button brings it back.", 0.8, 0.8, 0.8, true)
         GameTooltip:Show()
     end)
     win.clearBtn:SetScript("OnLeave", UI.HideTip)
@@ -1343,25 +1525,92 @@ local function Build()
         row.info = UI.Text(row, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
         row.info:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -3)
         row.info:SetPoint("RIGHT", row.btn, "LEFT", -6, 0)
-        row:SetScript("OnEnter", UI.ItemEnter)
+        row.sel = UI.Fill(row, 1, 1, 1, 0.10)
+        row.sel:Hide()
+        row:SetScript("OnEnter", function(self)
+            UI.ItemEnter(self)
+            local e = self.entry
+            if not (e and GameTooltip:IsOwned(self)) then return end
+            if e.recipe then
+                local n = e.main and e.need or math.ceil(((e.make or 0) > 0 and e.make or e.need) / math.max(1, e.recipe.per or 1))
+                GameTooltip:AddLine(("Click: pick it in the middle with %d craft%s, ready for Make or Plan mats."):format(n, n == 1 and "" or "s"), 0.05, 0.82, 0.62, true)
+            end
+            GameTooltip:Show()
+        end)
         row:SetScript("OnLeave", UI.HideTip)
-        row:SetScript("OnClick", UI.ItemClick)
+        row:SetScript("OnClick", function(self)
+            if IsModifiedClick("CHATLINK") then UI.ItemClick(self) return end
+            JQ.Try("professions window: guide pick", PickFromGuide, self.entry)
+            JQ.Try("professions window: guide step", RefreshGuide)
+        end)
         card.rows[i] = row
     end
     card.hint = UI.Text(card, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
     card.hint:SetPoint("BOTTOMLEFT", 10, 52)
     card.hint:SetPoint("RIGHT", -10, 0)
     card.hint:SetWordWrap(true)
-    card.planBtn = UI.Button(card, "Plan mats for all of it", 170, 22)
+    card.planBtn = UI.Button(card, "Plan step", 90, 22)
     card.planBtn:SetPoint("BOTTOMLEFT", 10, 26)
     card.planBtn:SetScript("OnClick", function(self)
-        if self.main and JQ.Requests and JQ.Requests.PlanFor then
-            local list = {}
-            for _, g in ipairs(self.main.reagents) do list[#list + 1] = { id = g.id, per = g.per } end
-            JQ.Requests.PlanFor(self.label, list, self.crafts, self.main.name)
-            JQ.Try("professions window: tab", SetTab, "plan")
+        JQ.Try("professions window: plan the guide step", PlanGuideStep, self.main, self.crafts, self.label)
+    end)
+    card.planBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Plan mats for this step", 1, 1, 1)
+        GameTooltip:AddLine("Everything this step needs, sub-crafts included: bank run, alts, make and buy. The craft itself stays on the plan as its last step until it's made.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    card.planBtn:SetScript("OnLeave", UI.HideTip)
+    -- the step after this one, into the same plan (one bank run for both)
+    card.nextPlanBtn = UI.Button(card, "Plan it too", 90, 18)
+    card.nextPlanBtn:SetPoint("BOTTOMRIGHT", -10, 6)
+    card.nextPlanBtn:SetScript("OnClick", function(self)
+        JQ.Try("professions window: plan the next guide step", PlanGuideStep, self.main, self.crafts, self.label)
+    end)
+    card.nextPlanBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Plan the next step too", 1, 1, 1)
+        GameTooltip:AddLine("Adds the next step's materials to the plan, so one bank run and one round of alts covers both. Plans add up: what one counts on, the next doesn't count again.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    card.nextPlanBtn:SetScript("OnLeave", UI.HideTip)
+    card.nextPlanBtn:Hide()
+    -- the next thing to make in the order of work, one click at a time
+    card.makeNext = UI.Button(card, "Make next", 90, 20)
+    card.makeNext:SetPoint("TOPRIGHT", -10, -8)
+    card.makeNext:SetScript("OnClick", function()
+        JQ.Try("professions window: make next", MakeOrderEntry, NextOrderEntry(card.order))
+    end)
+    card.makeNext:SetScript("OnMouseDown", function(_, button)
+        local e = NextOrderEntry(card.order)
+        if e and e.other and button == "LeftButton" and JQ.Requests and JQ.Requests.MakePrepare then
+            JQ.Try("professions window: make next", JQ.Requests.MakePrepare, e.id)
         end
     end)
+    card.makeNext:SetScript("OnEnter", function(self)
+        local e = NextOrderEntry(card.order)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Make the next one", 1, 1, 1)
+        if e then
+            local name = e.main and e.recipe.name or (UI.ItemNameQuality(e.id))
+            GameTooltip:AddLine(("Next: %d %s%s."):format(e.main and e.need or e.make, name, e.main and " (the main craft)" or ""), 0.9, 0.9, 0.9, true)
+        end
+        GameTooltip:AddLine("Works down the list: each click makes the next sub-craft still short, then the main craft. Crafting needs a click each time.", 0.62, 0.62, 0.66, true)
+        GameTooltip:Show()
+    end)
+    card.makeNext:SetScript("OnLeave", UI.HideTip)
+    card.makeNext:Hide()
+    -- where your skill is in this step
+    card.skillBg = card:CreateTexture(nil, "ARTWORK")
+    card.skillBg:SetColorTexture(1, 1, 1, 0.10)
+    card.skillBg:SetHeight(5)
+    card.skillBg:SetPoint("LEFT", card.head, "RIGHT", 8, 0)
+    card.skillBg:SetPoint("RIGHT", card.makeNext, "LEFT", -10, 0)
+    card.skillBar = card:CreateTexture(nil, "OVERLAY")
+    card.skillBar:SetHeight(5)
+    card.skillBar:SetPoint("LEFT", card.skillBg, "LEFT")
+    card.skillBg:Hide()
+    card.skillBar:Hide()
     -- skip the step shown (a recipe you won't make, mats you won't buy), and get skipped ones back
     card.learnBtn = UI.Button(card, "Where to learn it", 150, 22)
     card.learnBtn:SetPoint("TOPLEFT", card.sub, "BOTTOMLEFT", 0, -10)
@@ -1383,6 +1632,11 @@ local function Build()
     card.skipBtn:SetScript("OnClick", function(self)
         if not (self.title and card.guide) then return end
         Skipped(card.guide, true)[self.title] = true
+        -- a moment to take it back: Undo skip brings just this one back
+        card.lastSkip = { title = self.title, at = GetTime() }
+        C_Timer.After(SKIP_UNDO + 0.1, function()
+            if win and win:IsShown() and db.tab == "guide" then JQ.Try("professions window: guide step", RefreshGuide) end
+        end)
         JQ.Try("professions window: guide step", RefreshGuide)
     end)
     card.skipBtn:SetScript("OnEnter", function(self)
@@ -1392,17 +1646,23 @@ local function Build()
         GameTooltip:Show()
     end)
     card.skipBtn:SetScript("OnLeave", UI.HideTip)
-    card.unskipBtn = UI.Button(card, "Undo skips", 110, 18)
-    card.unskipBtn:SetPoint("BOTTOMRIGHT", -10, 6)
+    card.unskipBtn = UI.Button(card, "Undo skips", 110, 22)
+    card.unskipBtn:SetPoint("LEFT", card.skipBtn, "RIGHT", 6, 0)
     card.unskipBtn:SetScript("OnClick", function()
         if not card.guide then return end
-        local me = JQ.Alts and JQ.Alts.MyName()
-        if me and db.skip then db.skip[me .. "|" .. tostring(card.guide.name or card.guide.key or "?")] = nil end
+        local last = card.lastSkip
+        if last and GetTime() - last.at <= SKIP_UNDO then
+            Skipped(card.guide)[last.title] = nil   -- just the one skipped a moment ago
+        else
+            local me = JQ.Alts and JQ.Alts.MyName()
+            if me and db.skip then db.skip[me .. "|" .. tostring(card.guide.name or card.guide.key or "?")] = nil end
+        end
+        card.lastSkip = nil
         JQ.Try("professions window: guide step", RefreshGuide)
     end)
     card.next = UI.Text(card, 11)
     card.next:SetPoint("BOTTOMLEFT", 10, 8)
-    card.next:SetPoint("RIGHT", card.unskipBtn, "LEFT", -6, 0)
+    card.next:SetPoint("RIGHT", card.nextPlanBtn, "LEFT", -6, 0)
 
     -- middle: the picked recipe
     local mid = UI.Panel(win)
@@ -1471,15 +1731,41 @@ local function Build()
     d.makeAll:SetScript("OnLeave", UI.HideTip)
     d.plan = UI.Button(mid, "Plan mats", 80, 22)
     d.plan:SetPoint("LEFT", d.makeAll, "RIGHT", 4, 0)
-    d.plan:SetScript("OnClick", function() JQ.Try("professions window: plan", Plan) end)
+    d.plan:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    d.plan:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            JQ.Try("professions window: plan for", PlanForMenu, self)
+        else
+            JQ.Try("professions window: plan", Plan)
+        end
+    end)
     d.plan:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Plan the materials", 1, 1, 1)
         GameTooltip:AddLine("Plans a bank run for what's in your own bank or mail, asks your alts for the rest, adds a make step for what you can craft, and puts what nobody has on the buy list. The plan shows on the right.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Right-click: plan it for another character that makes it.", 0.62, 0.62, 0.66, true)
         GameTooltip:Show()
     end)
     d.plan:SetScript("OnLeave", UI.HideTip)
 
+    -- Plans make sub-materials: one click to buy them all instead (the switch in Settings too)
+    d.subBtn = UI.Button(mid, "Sub-mats: make", 120, 18)
+    d.subBtn:SetPoint("TOPLEFT", 12, -98)
+    d.subBtn:SetScript("OnClick", function()
+        JQ.SetEnabled("planSubMats", not JQ.IsEnabled("planSubMats"))
+        RefreshDetail()
+        if db.tab == "guide" then JQ.Try("professions window: guide step", RefreshGuide) end
+    end)
+    d.subBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Sub-materials", 1, 1, 1)
+        GameTooltip:AddLine(JQ.IsEnabled("planSubMats")
+            and "Make: when nobody has enough of a material you can make (bars, heavier leather), the plan makes it from its own materials. Click to buy them instead."
+            or "Buy: materials nobody has go on the buy list, even ones you could make. Click to make them again.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Right-click a material to always buy just that one.", 0.62, 0.62, 0.66, true)
+        GameTooltip:Show()
+    end)
+    d.subBtn:SetScript("OnLeave", UI.HideTip)
     local head = UI.Text(mid, 10, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3], "RIGHT")
     head:SetPoint("TOPRIGHT", -12, -104)
     head:SetText("need   have   alts")
@@ -1504,7 +1790,14 @@ local function Build()
         row.info:SetPoint("RIGHT", row.nums, "LEFT", -6, 0)
         row:SetScript("OnEnter", function(self) JQ.Try("professions window: material tooltip", RowEnter, self) end)
         row:SetScript("OnLeave", UI.HideTip)
-        row:SetScript("OnClick", UI.ItemClick)
+        row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        row:SetScript("OnClick", function(self, button)
+            if button == "RightButton" then
+                JQ.Try("professions window: buy, don't make", RowRightClick, self)
+            else
+                UI.ItemClick(self)
+            end
+        end)
         d.rows[i] = row
     end
     d.summary = UI.Text(mid, 11, UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
@@ -1583,7 +1876,10 @@ local function Build()
         if JQ.Requests and JQ.Requests.PlanShown then
             win.planEmpty:SetShown(db.tab ~= "guide" and not JQ.Requests.PlanShown())
         end
-        win.clearBtn:SetShown(db.tab ~= "guide" and JQ.Requests ~= nil and JQ.Requests.HasPlan ~= nil and JQ.Requests.HasPlan())
+        local R = JQ.Requests
+        local canUndo = R ~= nil and R.CanUndoCancel ~= nil and R.CanUndoCancel()
+        win.clearBtn.text:SetText(canUndo and "Undo clear" or "Clear plan")
+        win.clearBtn:SetShown(db.tab ~= "guide" and R ~= nil and ((R.HasPlan ~= nil and R.HasPlan()) or canUndo))
         win.tabGuide:SetShown(HasMastercraft())
         -- Mastercraft's guide wasn't there yet: ask again
         if db.tab == "guide" and not db.theirGuide and win.guideCard.waiting then
@@ -1914,8 +2210,33 @@ JQ.byKey[KEY].onDisable = function()
     Tuck(false)
 end
 
+-- A plan's craft is made. When it was a guide step's, offer to plan the next.
+local function GoalDone(label, id, n)
+    if not (type(label) == "string" and (label:find("%(guide%)$") or label:find("%(Mastercraft%)$"))) then return end
+    if not (StaticPopup_Show and StaticPopupDialogs) then return end
+    StaticPopupDialogs.JASEQOL_NEXT_STEP = StaticPopupDialogs.JASEQOL_NEXT_STEP or {
+        text = "%s", button1 = "Plan next step", button2 = CANCEL or "Not now",
+        OnAccept = function()
+            if not (win and win:IsShown() and HasMastercraft()) then
+                JQ.Print("Open the profession to plan the guide's next step: the Mastercraft guide tab has it.")
+                return
+            end
+            SetTab("guide")
+            local b = win.guideCard and win.guideCard.planBtn
+            if b and b:IsShown() and b.main then
+                PlanGuideStep(b.main, b.crafts, b.label)
+            else
+                JQ.Print("The guide's next step has nothing to plan here (a recipe to learn, or gathering).")
+            end
+        end,
+        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+    }
+    StaticPopup_Show("JASEQOL_NEXT_STEP", ("Made %d %s: that guide step's plan is done.\n\nPlan the next step's materials?"):format(n or 0, (UI.ItemNameQuality(id))))
+end
+if JQ.Requests and JQ.Requests.OnGoalDone then JQ.Requests.OnGoalDone(function(...) JQ.Try("professions window: next step", GoalDone, ...) end) end
+
 JQ.ProfView = { Active = function() return win ~= nil and win:IsShown() end, Wanted = Wanted,
-    CraftNow = function(rid, n, name) PickInGame(rid); return CraftNow(rid, n, name) end,
+    CraftNow = function(rid, n, name, quiet) PickInGame(rid); return CraftNow(rid, n, name, quiet) end,
     LineFor = LineFor, Debug = Dbg,
     -- show the recipe that makes an item (once its profession is open)
     SelectOutput = function(itemID)

@@ -115,76 +115,19 @@ local function Work(step)
 end
 
 local function Request()
-    local R, Alts = JQ.Requests, JQ.Alts
-    local me = Alts and Alts.MyName()
+    local R = JQ.Requests
     local step = StepNeeds()
-    if not (R and me and step) then return end
-    local label = Label(step)
-    -- planned before: take that plan's asks back out, then plan it afresh
-    -- (what you have changes; a second click must never double anything)
-    local mine = R.RequestOf(me)
-    local again = false
-    if mine then
-        local old = mine.plans and mine.plans[label]
-        for id, n in pairs(old or {}) do
-            local e = mine.items[id]
-            if e then e.need = math.max(e.sent or 0, (e.need or 0) - n) end
-        end
-        if mine.plans then mine.plans[label] = nil end
-        for i = #(mine.recipes or {}), 1, -1 do
-            if mine.recipes[i] == label then
-                table.remove(mine.recipes, i)
-                again = true
-            end
-        end
-    end
-    local rows, request, tot = Work(step)
-    -- what's in this character's own bank or mail is a bank run, not a request;
-    -- what nobody has enough of but this character can make (bars from ore) is made
-    local own, made = R.PlanOwn(me, rows)
-    if not next(request) and own == 0 and made == 0 then
-        if again then R.AddRequest(me, {}, nil) end   -- tidies away what was taken back out
-        JQ.Print(tot.vendor > 0 and ("Nothing to plan for %s: the rest is sold by vendors."):format(step.title)
-            or ("Nothing to plan for %s: it's all in your bags."):format(step.title))
-        return
-    end
-    R.AddRequest(me, request, label)
-    if next(request) then
-        -- remembered, so planning this step again can take it back out first
-        local r = R.RequestOf(me)
-        if r then
-            r.plans = r.plans or {}
-            r.plans[label] = {}
-            for id, n in pairs(request) do r.plans[label][id] = n end
-        end
-    end
-    if again then JQ.Print(("Planned %s again, from what you have now."):format(label)) end
-    if own > 0 then
-        JQ.Print(("Bank run for %s: %d item(s) to take from your own bank or mail."):format(label, own))
-    end
-    if made > 0 then
-        local parts = {}
-        for _, e in ipairs(rows) do
-            if e.kind == "make" and (e.makeQty or 0) > 0 then parts[#parts + 1] = R.ItemText(e.id, e.makeQty) end
-        end
-        JQ.Print("To make yourself: " .. table.concat(parts, ", ") .. ". The plan gathers what they're made from.")
-    end
-    if next(request) then
-        local parts = {}
-        for id, n in pairs(request) do parts[#parts + 1] = R.ItemText(id, n) end
-        JQ.Print(("Requested for %s: %s. The request plan has the steps."):format(label, table.concat(parts, ", ")))
-    end
+    if not (R and R.PlanFor and step) then return end
+    local list = {}
+    for _, n in ipairs(step.needs) do list[#list + 1] = { id = n.id, per = n.need } end
+    -- the craft itself stays on the plan as its last step until it's made
+    local outID = IDByName(step.title, R.NameIndex())
+    local rec = outID and JaseQoLDB.recipeIndex and JaseQoLDB.recipeIndex[outID]
+    local goal = type(rec) == "table" and { id = outID, n = step.crafts * math.max(1, rec.n or 1) } or nil
+    local plan = R.PlanConfirm or R.PlanFor
+    plan(Label(step), list, 1, step.title, goal)
     if #step.unknown > 0 then
         JQ.Print("Couldn't work out these materials, add them yourself: " .. table.concat(step.unknown, ", "))
-    end
-    -- what no alt has: the buy list, as an Auctionator shopping list when it's there
-    local toBuy, order = R.BuyList(me)
-    if #order > 0 then
-        if R.ShoppingListAPI() then
-            R.MakeShoppingList(order, toBuy)
-        else
-            JQ.Print(("%d item(s) are on no alt: the Requests tab lists what to buy."):format(#order))
-        end
     end
 end
 

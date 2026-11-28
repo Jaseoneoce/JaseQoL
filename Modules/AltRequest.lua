@@ -32,6 +32,34 @@ JQ.AddModule({
     description = "In your profession window, request a recipe's missing reagents from your alts. JaseTools plans who sends what (fewest logins, alts parked in bank towns, bags before bank) and gives each alt a job with Pull from bank and Send buttons. Requests tab in the JaseTools window. Needs Alt tracking.",
     default = true,
 })
+local SUB_KEY = "planSubMats"
+JQ.AddModule({
+    key = SUB_KEY,
+    label = "Plans make sub-materials",
+    description = "When nobody has enough of a material you can make yourself (bars from ore, heavy leather from light), the plan adds a make step for it from its own materials. Switch off to put those materials on the buy list instead. Right-click a material in the Professions window to always buy just that one. Needs Request mats from alts.",
+    default = true,
+})
+local CHEAP_KEY = "planMakeCheaper"
+JQ.AddModule({
+    key = CHEAP_KEY,
+    label = "Make sub-materials only when cheaper",
+    description = "A plan makes a sub-material (heavy leather from light, bars from ore) only when buying its materials costs less than buying it made, by the last auction scan. Without prices it still makes it. Needs Plans make sub-materials.",
+    default = false,
+})
+local CONFIRM_KEY = "planConfirm"
+JQ.AddModule({
+    key = CONFIRM_KEY,
+    label = "Confirm plans first",
+    description = "Before a plan is made, a box sums it up - the bank run, what alts send, what's made and what's bought, with its gold - and asks to go ahead. Needs Request mats from alts.",
+    default = true,
+})
+local QUEST_KEY = "questPlan"
+JQ.AddModule({
+    key = QUEST_KEY,
+    label = "Plan quest items",
+    description = "The Requests tab lists the items your quests still need (20 Thorium Bar, 10 Rugged Leather...) with a Plan button: the bank run, your alts and the buy list, as for a recipe. Items only a quest drops are left out. Needs Request mats from alts.",
+    default = true,
+})
 
 local UI = JQ.UI
 local Alts, db
@@ -59,6 +87,42 @@ end
 
 local function Keep(id) return (db.keep and db.keep[id]) or 0 end
 
+-- What a character's own quests need (they keep it: never asked for, never
+-- mailed). Live on this character, as last recorded on the others.
+local function QuestKeep(alt, id)
+    if alt == (Alts and Alts.MyName()) and JQ.QuestReserve then
+        local ok, t = pcall(JQ.QuestReserve)
+        return ok and t and t[id] or 0
+    end
+    local d = alt and Alts and Alts.RealmTable()[alt]
+    return d and d.quests and d.quests[id] or 0
+end
+
+-- Record this character's quest needs, for plans made on the others.
+local function RecordQuests()
+    local me = Alts and Alts.MyName()
+    local d = me and Alts.RealmTable()[me]
+    if not (d and JQ.QuestReserve) then return end
+    local ok, t = pcall(JQ.QuestReserve)
+    if ok and t then d.quests = next(t) and t or nil end
+end
+
+-- May a plan make this item from its own materials? (Off for all with the
+-- switch; off for one item when it's on the always-buy list, db.buyOnly.)
+local function MakeAllowed(id)
+    if not JQ.IsEnabled(SUB_KEY) then return false end
+    return not (db and db.buyOnly and db.buyOnly[id])
+end
+
+local function ToggleBuyOnly(id)
+    if not (db and id) then return end
+    db.buyOnly = db.buyOnly or {}
+    db.buyOnly[id] = (not db.buyOnly[id]) or nil
+    local name = UI.ItemNameQuality(id)
+    JQ.Print(db.buyOnly[id] and ("Plans will buy %s, never make it. Right-click it again to undo."):format(name)
+        or ("Plans may make %s again when nobody has enough."):format(name))
+end
+
 -- bags / bank / mailbox counts for a character: bags (and an open bank) live
 -- for me, the rest as last recorded.
 local function Holdings(alt)
@@ -73,9 +137,9 @@ end
 -- How many of id this alt can give: total minus the keep amount. Bags first,
 -- then the mailbox (they're at one to send anyway), then the bank.
 -- Returns take, fromBags, fromBank, fromMail.
-local function Give(bags, bank, id, want, mail)
+local function Give(bags, bank, id, want, mail, alt)
     local b, m, k = bags[id] or 0, (mail and mail[id]) or 0, bank[id] or 0
-    local take = math.min(want, math.max(0, b + m + k - Keep(id)))
+    local take = math.min(want, math.max(0, b + m + k - Keep(id) - (alt and QuestKeep(alt, id) or 0)))
     local fromBags = math.min(take, b)
     local fromMail = math.min(take - fromBags, m)
     return take, fromBags, take - fromBags - fromMail, fromMail
@@ -101,6 +165,12 @@ local IsVendor   -- forward (vendor list below): vendor items are never requeste
 local QueueMini  -- forward (plan popout below): redraw it shortly
 local Plan       -- forward (the planner below)
 local FinishRequest  -- forward (plan popout below): this character's plan is over
+local PlanFor        -- forward (bottom): plan the materials of N crafts
+local ItemText       -- forward (Requests tab): "15 Thorium Tube", in its colour
+local goalListeners = {}   -- fn(label, itemID, n): a plan's craft has been made
+local PlanConfirm, CancelPlan, CanUndoCancel, UndoCancel   -- forward (bottom)
+local NextMake, StartChain   -- forward (craft order, with the plan popout)
+local MakeRecipe             -- forward (how an item is made, below)
 
 local function Remaining(recipient)
     local r = RequestOf(recipient)
@@ -159,16 +229,32 @@ end
 -- wants = {[id] = total needed}; madeInto = {[id] = the item it's a reagent of}
 -- (that part of the run is over once that item has been made).
 -- Returns how many items the bank run got.
-local function AddOwn(recipient, wants, madeInto)
+-- pre = {[id] = n} other plans already count on (from bags first, then bank and
+-- mail); label = the plan this is for (o.by[label]), so planning it again can
+-- take its part back out.
+local function AddOwn(recipient, wants, madeInto, pre, label)
     local bags, bank, mail = Holdings(recipient)
     local r, added = nil, 0
     for id, need in pairs(wants or {}) do
         local b = bags[id] or 0
-        local fetch = math.min(need, b + (bank[id] or 0) + (mail[id] or 0)) - math.min(need, b)
+        local used = (pre and pre[id]) or 0
+        local inBags = math.max(0, b - used)
+        local all = math.max(0, b + (bank[id] or 0) + (mail[id] or 0) - used)
+        local fetch = math.min(need, all) - math.min(need, inBags)
         if fetch > 0 then
             r = r or RequestOf(recipient, true)
             r.own = r.own or {}
-            r.own[id] = { n = fetch, base = b, of = madeInto and madeInto[id] or nil }
+            local o = r.own[id]
+            if o then
+                o.n = (o.n or 0) + fetch
+            else
+                o = { n = fetch, base = b, of = madeInto and madeInto[id] or nil }
+                r.own[id] = o
+            end
+            if label then
+                o.by = o.by or {}
+                o.by[label] = (o.by[label] or 0) + fetch
+            end
             added = added + fetch
         end
     end
@@ -196,14 +282,24 @@ end
 -- To make: what the plan has its owner smelt or craft because nobody has
 -- enough of it, from reagents the plan also gathers. r.make[id] = { n = how
 -- many to make, base = how many it had (bags + bank + mail) when planned }.
-local function AddMake(recipient, makes)
+local function AddMake(recipient, makes, label)
     local bags, bank, mail = Holdings(recipient)
     local added = 0
     for id, n in pairs(makes or {}) do
         if n > 0 then
             local r = RequestOf(recipient, true)
             r.make = r.make or {}
-            r.make[id] = { n = n, base = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0) }
+            local m = r.make[id]
+            if m and not m.goal then
+                m.n = (m.n or 0) + n
+            else
+                m = { n = n, base = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0) }
+                r.make[id] = m
+            end
+            if label then
+                m.by = m.by or {}
+                m.by[label] = (m.by[label] or 0) + n
+            end
             added = added + n
         end
     end
@@ -211,7 +307,32 @@ local function AddMake(recipient, makes)
     return added
 end
 
--- What's still to make: { {id, n}, ... } by name. What alts have sent of it doesn't count as made.
+-- How many of id a character has for a plan's goal: bags + bank + mail, and on
+-- this character the game's own count too (a crafted item that binds when made
+-- isn't in Holdings, which counts what can be mailed).
+local GetCountFn = (C_Item and C_Item.GetItemCount) or GetItemCount
+local function GoalCount(recipient, id)
+    local bags, bank, mail = Holdings(recipient)
+    local n = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0)
+    if recipient == Alts.MyName() and GetCountFn then
+        local ok, c = pcall(GetCountFn, id, true)
+        if ok and type(c) == "number" then n = math.max(n, c + (mail[id] or 0)) end
+    end
+    return n
+end
+
+-- The goal of a plan: the craft it was planned for (15 Thorium Tube), kept in
+-- r.make with goal = the plan's label, so the plan stays until it's made.
+local function AddGoal(recipient, goal, label)
+    if not (goal and goal.id and (goal.n or 0) > 0) then return end
+    local r = RequestOf(recipient, true)
+    r.make = r.make or {}
+    r.make[goal.id] = { n = goal.n, base = GoalCount(recipient, goal.id), goal = label }
+    QueueMini(true)
+end
+
+-- What's still to make: { {id, n, goal}, ... }: what it's made from first (by
+-- name), the plans' goals last. What alts have sent of it doesn't count as made.
 local function MakeLeft(recipient)
     local out = {}
     local r = recipient and RequestOf(recipient)
@@ -220,18 +341,56 @@ local function MakeLeft(recipient)
     for id, m in pairs(r.make) do
         local sent = 0
         for _, list in pairs(r.done or {}) do sent = sent + (list[id] or 0) end
-        local total = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0)
+        local total = m.goal and GoalCount(recipient, id) or ((bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0))
         local left = (m.base or 0) + (m.n or 0) + sent - total
-        if left > 0 then out[#out + 1] = { id = id, n = math.min(left, m.n or left) } end
+        if left > 0 then out[#out + 1] = { id = id, n = math.min(left, m.n or left), goal = m.goal, total = m.n } end
     end
-    table.sort(out, function(a, b) return UI.ItemNameQuality(a.id) < UI.ItemNameQuality(b.id) end)
+    -- what something is made from is made first: a level per item (0 = needs
+    -- nothing else on the list, 1 = needs a level-0 one...), then the goals, then by name
+    local inList, level = {}, {}
+    for _, e in ipairs(out) do inList[e.id] = true end
+    local function Level(id, seen)
+        if level[id] then return level[id] end
+        seen = seen or {}
+        if seen[id] then return 0 end
+        seen[id] = true
+        local rec = MakeRecipe(id, recipient)
+        local lv = 0
+        for rid in pairs((rec and rec.r) or {}) do
+            if inList[rid] and rid ~= id then lv = math.max(lv, Level(rid, seen) + 1) end
+        end
+        seen[id] = nil
+        level[id] = lv
+        return lv
+    end
+    for _, e in ipairs(out) do
+        e.level = Level(e.id)
+        -- the first thing on the list it waits for
+        local rec = MakeRecipe(e.id, recipient)
+        for rid in pairs((rec and rec.r) or {}) do
+            if inList[rid] and rid ~= e.id and (not e.after or Level(rid) > Level(e.after)) then e.after = rid end
+        end
+    end
+    table.sort(out, function(a, b)
+        if a.level ~= b.level then return a.level < b.level end
+        if (a.goal ~= nil) ~= (b.goal ~= nil) then return b.goal ~= nil end
+        return UI.ItemNameQuality(a.id) < UI.ItemNameQuality(b.id)
+    end)
     return out
+end
+
+-- Items of id this character's plan still has it make as a goal (nil: none).
+local function GoalLeft(id)
+    local me = Alts and Alts.MyName()
+    for _, m in ipairs(MakeLeft(me)) do
+        if m.id == id and m.goal then return m.n, m.goal end
+    end
 end
 
 -- From a Breakdown's rows: the bank run for everything it counts on from this
 -- character's own bank and mail (reagents of what's to be made included), and
 -- what's to be made. Returns items in the bank run, items to make.
-local function PlanOwn(recipient, rows)
+local function PlanOwn(recipient, rows, pre, label)
     local wants, makes, madeInto = {}, {}, {}
     local makeAt = {}   -- [depth] = the item being made at that depth
     for _, e in ipairs(rows or {}) do
@@ -244,8 +403,8 @@ local function PlanOwn(recipient, rows)
         end
     end
     -- what's to be made first: the bank run's reagents refer to it
-    local made = AddMake(recipient, makes)
-    return AddOwn(recipient, wants, madeInto), made
+    local made = AddMake(recipient, makes, label)
+    return AddOwn(recipient, wants, madeInto, pre, label), made
 end
 
 -- On the owner: drop what has been fetched or made (or is no longer there to
@@ -269,11 +428,18 @@ local function TidyOwn()
             end
         end
     end
+    local made = {}
     if r.make then
         local still = {}
         for _, e in ipairs(MakeLeft(me)) do still[e.id] = true end
-        for id in pairs(r.make) do
-            if not still[id] then r.make[id] = nil end
+        for id, m in pairs(r.make) do
+            if not still[id] then
+                if m.goal then
+                    made[#made + 1] = { id = id, n = m.n, label = m.goal }
+                    if r.uses then r.uses[m.goal] = nil end
+                end
+                r.make[id] = nil
+            end
         end
         if not next(r.make) then r.make, changed = nil, true end
     end
@@ -287,6 +453,11 @@ local function TidyOwn()
         if not next(r.own) then r.own, changed = nil, true end
     end
     if changed then Tidy(me) end
+    -- a plan's craft is made: say so, and let the Professions window offer the next step
+    for _, g in ipairs(made) do
+        JQ.Print(("Made %s: that's %s done."):format(ItemText(g.id, g.n), g.label))
+        for _, fn in ipairs(goalListeners) do pcall(fn, g.label, g.id, g.n) end
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -313,7 +484,7 @@ function Plan(recipient)
             if not used[c.name] then
                 local cover, fromBags = 0, 0
                 for id, want in pairs(rem) do
-                    local take, fb, _, fm = Give(c.bags, c.bank, id, want, c.mail)
+                    local take, fb, _, fm = Give(c.bags, c.bank, id, want, c.mail, c.name)
                     cover, fromBags = cover + take, fromBags + fb + fm
                 end
                 if cover > 0 then
@@ -327,7 +498,7 @@ function Plan(recipient)
         used[best.name] = true
         local step = { alt = best.name, items = {}, town = best.town, needsBank = false }
         for id, want in pairs(rem) do
-            local take, fb, fk, fm = Give(best.bags, best.bank, id, want, best.mail)
+            local take, fb, fk, fm = Give(best.bags, best.bank, id, want, best.mail, best.name)
             if take > 0 then
                 step.items[id] = { bags = fb, bank = fk, mail = fm }
                 if fk > 0 then step.needsBank = true end
@@ -521,6 +692,20 @@ local function StartSend(recipient)
             for id, e in pairs(j.items) do left[id] = (left[id] or 0) + (e.bags or 0) + (e.bank or 0) + (e.mail or 0) end
         end
     end
+    -- what this character's quests need stays here
+    local inBags = Live(Alts.BagIDs())
+    local kept = {}
+    for id, n in pairs(left) do
+        local q = QuestKeep(Alts.MyName(), id)
+        if q > 0 then
+            local can = math.max(0, (inBags[id] or 0) - q)
+            if can < n then
+                kept[#kept + 1] = ("%d %s"):format(n - can, (UI.ItemNameQuality(id)))
+                left[id] = can > 0 and can or nil
+            end
+        end
+    end
+    if #kept > 0 then Status("Kept for your quests, not sent: " .. table.concat(kept, ", ") .. ".") end
     if not next(left) then Status("Nothing to send to " .. Alts.Display(recipient)) return end
     job = { to = recipient, left = left, mails = 0 }
     SendNext()
@@ -606,10 +791,17 @@ end
 -------------------------------------------------------------------------------
 local autoDone = {}
 
+-- Is a step's "auto" on? Taking the plan's mail out is, until you untick it.
+local function AutoOn(kind)
+    local v = db and db.auto and db.auto[kind]
+    if v == nil then return kind == "mail" end
+    return v and true or false
+end
+
 local function AutoRun()
     if not (db and db.auto and Alts and Alts.MyName()) or InCombatLockdown() then return end
     if not (JQ.IsEnabled(KEY) and JQ.IsEnabled("requestMini")) then return end
-    local auto = db.auto
+    local auto = { bank = AutoOn("bank"), mail = AutoOn("mail"), send = AutoOn("send") }
     if not Alts.IsBankOpen() then
         autoDone.bank = nil
     elseif auto.bank and not autoDone.bank and next((BankPulls())) then
@@ -650,7 +842,7 @@ local ev = CreateFrame("Frame")
 local win
 local ROW_H = 26
 
-local function ItemText(id, n)
+function ItemText(id, n)
     local name, q = UI.ItemNameQuality(id)
     local r, g, b = UI.QualityColor(q)
     return ("%d |cff%02x%02x%02x%s|r"):format(n, r * 255, g * 255, b * 255, name)
@@ -772,7 +964,7 @@ local SMELT = {
 
 -- How id is made, whether I can make it, and who can.
 -- Learned recipes (opened profession windows) first, then smelting.
-local function MakeRecipe(id, me)
+function MakeRecipe(id, me)
     local learned = JaseQoLDB.recipeIndex and JaseQoLDB.recipeIndex[id]
     if type(learned) == "table" and learned.r and next(learned.r) then
         local makers = {}
@@ -852,7 +1044,7 @@ local function Coverage(bundle, idx, used)
     for name, data in pairs(realm) do
         if name ~= me and (not faction or not data.faction or data.faction == faction) then
             local bags, bank, mail = Holdings(name)
-            local give = Give(bags, bank, id, math.huge, mail)
+            local give = Give(bags, bank, id, math.huge, mail, name)
             if give > 0 then offers[#offers + 1] = { alt = name, n = give } end
         end
     end
@@ -881,7 +1073,7 @@ local function Coverage(bundle, idx, used)
                     for name, data in pairs(realm) do
                         if name ~= me and (not faction or not data.faction or data.faction == faction) then
                             local bags, bank, mail = Holdings(name)
-                            local give = Give(bags, bank, rid, math.huge, mail)
+                            local give = Give(bags, bank, rid, math.huge, mail, name)
                             local s = math.min(spokenR, give); give = give - s; spokenR = spokenR - s
                             if give > 0 and got < need then
                                 got = got + give
@@ -1339,6 +1531,59 @@ else
     end
 end
 
+-------------------------------------------------------------------------------
+--  Quest items: what the quests in the log still need, planned like a recipe's
+--  materials (bank run, alts, make, buy). Items only a quest gives (quest
+--  items, bind on pickup) can't come from alts or the auction house: left out.
+-------------------------------------------------------------------------------
+local ItemInfoFn = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+
+local function QuestOnly(id)
+    local ok, _, _, _, _, _, _, _, _, _, _, _, classID, _, bindType = pcall(ItemInfoFn, id)
+    if not ok then return false end
+    return classID == 12 or bindType == 1 or bindType == 4
+end
+
+-- { {quest, items = {{id, total, have}}, unknown = {names}}, ... }: quests with something still to collect
+local function QuestPlanRows()
+    if not (JQ.IsEnabled(QUEST_KEY) and JQ.QuestItemObjectives) then return {} end
+    local idx = NameIndex()
+    local byQuest, order = {}, {}
+    for _, o in ipairs(JQ.QuestItemObjectives()) do
+        if o.have < o.total then
+            local q = byQuest[o.quest]
+            if not q then
+                q = { quest = o.quest, items = {}, unknown = {} }
+                byQuest[o.quest], order[#order + 1] = q, q
+            end
+            local id = idx[o.name:lower()]
+            if not id then
+                local ok, _, link = pcall(ItemInfoFn, o.name)
+                id = ok and link and tonumber(link:match("item:(%d+)")) or nil
+            end
+            -- only what one of your characters can make (bars, potions, gear):
+            -- drops and quest items can't be planned
+            if id and not QuestOnly(id) and MakeRecipe(id, Alts.MyName()) then
+                q.items[#q.items + 1] = { id = id, total = o.total, have = o.have }
+            end
+        end
+    end
+    local out = {}
+    for _, q in ipairs(order) do
+        if #q.items > 0 then out[#out + 1] = q end
+    end
+    return out
+end
+
+local function PlanQuest(q)
+    local list = {}
+    for _, it in ipairs(q.items) do list[#list + 1] = { id = it.id, per = it.total } end
+    if #list == 0 then return end
+    PlanConfirm("Quest: " .. q.quest, list, 1, q.quest, nil, nil, function()
+        if win and win:IsShown() then win:Refresh() end
+    end)
+end
+
 local function Rows()
     local rows = {}
     local function add(r) rows[#rows + 1] = r end
@@ -1378,7 +1623,10 @@ local function Rows()
         add({ head = "Plan for " .. NameOf(me) })
         local what = (plan.recipes and #plan.recipes > 0) and table.concat(plan.recipes, ", ") or "Requested items"
         add({ text = what, indent = true, button = "Cancel plan", enabled = true,
-              action = function() FinishRequest("Plan cancelled.") end })
+              action = function() CancelPlan("Plan cancelled.") end })
+    elseif CanUndoCancel() then
+        add({ head = "Plan for " .. NameOf(me) })
+        add({ text = "Plan cleared.", indent = true, button = "Undo clear", enabled = true, action = UndoCancel })
     end
 
     -- This character's own bank run: what its requests need from its own bank or mail.
@@ -1403,7 +1651,29 @@ local function Rows()
     if #toMake > 0 then
         add({ head = "To make on this character" })
         for _, m in ipairs(toMake) do
-            add({ icon = m.id, indent = true, text = ItemText(m.id, m.n) .. "  |cff9e9ea8(once the materials are in your bags)|r" })
+            add({ icon = m.id, indent = true, text = ItemText(m.id, m.n) .. (m.goal and "  |cff9e9ea8(what the plan is for)|r"
+                or "  |cff9e9ea8(once the materials are in your bags)|r") })
+        end
+    end
+
+    -- Items the quests in the log still need: one Plan button a quest.
+    local quests = QuestPlanRows()
+    if #quests > 0 then
+        add({ head = "Items your quests need" })
+        local planned = {}
+        for _, label in ipairs((plan and plan.recipes) or {}) do planned[label] = true end
+        for _, q in ipairs(quests) do
+            local parts = {}
+            for _, it in ipairs(q.items) do
+                parts[#parts + 1] = ("%d/%d %s"):format(it.have, it.total, ItemName(it.id))
+            end
+            add({ text = ("|cffffd25a%s|r  |cff9e9ea8%s|r"):format(q.quest, table.concat(parts, ", ")), indent = true,
+                  button = #q.items > 0 and (planned["Quest: " .. q.quest] and "Plan again" or "Plan") or nil,
+                  enabled = #q.items > 0, action = function() PlanQuest(q) end })
+            if #q.unknown > 0 then
+                add({ text = "Not seen yet (open your bags or search it on the auction house once): " .. table.concat(q.unknown, ", "),
+                      muted = true, indent = true })
+            end
         end
     end
 
@@ -1469,10 +1739,26 @@ local function Rows()
     local toBuy, order = BuyList(me)
     if #order > 0 then
         add({ head = "Buy on the auction house" })
-        local list = {}
-        for _, id in ipairs(order) do list[#list + 1] = ItemText(id, toBuy[id]) end
+        -- by item type (Leather, Metal & Stone...), each with its price
+        local groups, gorder = {}, {}
+        local total, unpriced, from = 0, 0, nil
+        for _, id in ipairs(order) do
+            local ok, _, _, _, _, _, itemType = pcall(ItemInfoFn, id)
+            local kind = (ok and itemType) or "Other"
+            if not groups[kind] then groups[kind] = {}; gorder[#gorder + 1] = kind end
+            local c, _, src, age = CostToBuy(id, toBuy[id])
+            if c then total = total + c else unpriced = unpriced + 1 end
+            if src then from = FromScan(src, age) end
+            groups[kind][#groups[kind] + 1] = ItemText(id, toBuy[id]) .. (c and ("  |cff9e9ea8" .. Money(c) .. "|r") or "")
+        end
+        table.sort(gorder)
+        for _, kind in ipairs(gorder) do
+            add({ text = ("|cffffd25a%s:|r %s"):format(kind, table.concat(groups[kind], ", ")), indent = true })
+        end
         local can = ShoppingListAPI() ~= nil
-        add({ text = table.concat(list, ", "), indent = true,
+        add({ text = (total > 0 and ("About %s in all"):format(Money(total)) or "No prices yet")
+                .. (unpriced > 0 and total > 0 and (", %d without a price"):format(unpriced) or "")
+                .. (from and ("  |cff9e9ea8(prices: %s)|r"):format(from) or ""), indent = true,
               button = can and "Shopping list" or nil, enabled = can,
               action = can and function() MakeShoppingList(order, toBuy) end or nil })
         if not can then
@@ -1996,7 +2282,7 @@ local function MakePrepare(id)
     if line and T and T.OpenTradeSkill then pcall(T.OpenTradeSkill, line) end
 end
 
-local function MakeNow(id, n)
+local function MakeNow(id, n, quiet)
     if not id or InCombatLockdown() then return end
     local name = ItemName(id)
     local T = C_TradeSkillUI
@@ -2019,7 +2305,7 @@ local function MakeNow(id, n)
                     end
                     -- through the Professions window (the game's own Create button) when it's there
                     if JQ.ProfView and JQ.ProfView.Active() and JQ.ProfView.CraftNow then
-                        JQ.ProfView.CraftNow(rid, crafts, info.name or name)
+                        JQ.ProfView.CraftNow(rid, crafts, info.name or name, quiet)
                     else
                         T.CraftRecipe(rid, crafts)
                     end
@@ -2074,6 +2360,97 @@ local function MakeNow(id, n)
     Status(("Open the profession that makes %s, then click make."):format(name))
 end
 
+-------------------------------------------------------------------------------
+--  Craft order: the plan's make steps one after another. A press makes the
+--  next one that can be made (its parts first); when a batch is over the next
+--  starts by itself while the profession is open. If the game wants a press
+--  for each batch, the plan's button says what's next instead.
+-------------------------------------------------------------------------------
+local chain   -- { at, tried = id } while the plan's crafts are being worked through
+
+-- Can this character make n of id right now, in the open profession window? -> recipe ID
+local function ReadyToMake(id)
+    local T = C_TradeSkillUI
+    local rid = OpenRecipeFor(id)
+    if not (rid and T and T.GetRecipeInfo) then return nil end
+    local ok, info = pcall(T.GetRecipeInfo, rid)
+    return (ok and info and (info.numAvailable or 0) > 0) and rid or nil
+end
+
+-- The next make step: the first in craft order that can be made now, else the first in order.
+function NextMake(who)
+    local list = MakeLeft(who)
+    if who == Alts.MyName() then
+        for _, m in ipairs(list) do
+            if ReadyToMake(m.id) then return m end
+        end
+    end
+    return list[1]
+end
+
+-- Make the next step (a click led here); the rest follow as each batch ends.
+function StartChain(clicked)
+    local me = Alts.MyName()
+    local nx = NextMake(me)
+    if not nx then return end
+    -- a step that waits for another: its parts first
+    if clicked and clicked.id ~= nx.id and ReadyToMake(clicked.id) then nx = clicked end
+    if clicked and clicked.id ~= nx.id then
+        Status(("%s needs %s first: making that."):format(ItemName(clicked.id), ItemName(nx.id)), true)
+    end
+    chain = { at = GetTime() }
+    MakeNow(nx.id, nx.n)
+end
+
+-- A batch is over (no cast, no repeats left): start the next, if the game lets an addon.
+local function ChainNext()
+    if not chain or InCombatLockdown() then return end
+    if (UnitCastingInfo and UnitCastingInfo("player")) or (RepeatsLeft() or 0) > 0 then return end
+    local me = Alts.MyName()
+    local nx = NextMake(me)
+    if not nx then
+        chain = nil
+        JQ.Print("Craft order done: everything on the plan is made.")
+        return
+    end
+    if not ReadyToMake(nx.id) then
+        chain = nil
+        JQ.Print(("Next: %s - %s. Press the plan's Make button."):format(ItemText(nx.id, nx.n),
+            OpenRecipeFor(nx.id) and "its materials aren't in your bags yet" or "it's made in another profession"))
+        QueueMini()
+        return
+    end
+    if db.chainNeedsClick then
+        JQ.Print(("Next: %s. Press the plan's Make button."):format(ItemText(nx.id, nx.n)))
+        if PlaySound and SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON then pcall(PlaySound, SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON) end
+        QueueMini()
+        return
+    end
+    -- try it; if no cast starts, the game wants a click for each batch: remember that
+    local at = GetTime()
+    chain.tried, chain.triedAt = nx.id, at
+    JQ.Try("craft order: next", MakeNow, nx.id, nx.n, true)
+    C_Timer.After(1.5, function()
+        if chain and chain.triedAt == at and not chain.started then
+            db.chainNeedsClick = true
+            chain = nil
+            JQ.Print(("The game wants a click for each batch. Next: %s - press the plan's Make button."):format(ItemText(nx.id, nx.n)))
+            QueueMini()
+        end
+    end)
+end
+
+local function ChainEvent(event)
+    if not chain then return end
+    if event == "UNIT_SPELLCAST_START" then
+        chain.started = true
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
+        chain.started = nil
+        chain.triedAt = nil
+        C_Timer.After(0.8, function() JQ.Try("craft order", ChainNext) end)
+    end
+end
+
 -- One row per item of a step kept in one place (field = "bags" / "bank" /
 -- "mail"), by name: its icon, "40 Rugged Leather" and the place on the right.
 local function PlaceRows(lines, items, field, tag, now)
@@ -2084,6 +2461,32 @@ local function PlaceRows(lines, items, field, tag, now)
     table.sort(ids, function(a, b) return ItemName(a) < ItemName(b) end)
     for _, id in ipairs(ids) do
         lines[#lines + 1] = { sub = true, now = now, item = id, text = ItemText(id, items[id][field]), tag = tag }
+    end
+end
+
+-- The step to do now is the first one still listed (done ones are gone or
+-- ticked): it gets the NOW marker and the plan's heading names it. Later steps
+-- are dimmed, except this character's own job for someone else's plan.
+local function MarkCurrent(lines, first)
+    local head = lines[first]
+    local cur, state
+    for i = first + 1, #lines do
+        local d = lines[i]
+        if d.gap then
+            if not cur then
+                cur, state = d, "cur"
+                d.cur, d.now = true, true
+                d.text = ("|cff%sNOW|r  "):format(UI.AccentHex()) .. d.text
+            else
+                state = d.mine and "mine" or "later"
+                if state == "later" then d.now = false end
+            end
+        elseif state == "later" then
+            d.now = false
+        end
+    end
+    if head and head.head and cur and cur.what then
+        head.text = head.text .. ("  |cff%s- %s|r"):format(UI.AccentHex(), cur.what)
     end
 end
 
@@ -2099,6 +2502,7 @@ local function MiniLines()
         return a < b
     end)
     for _, recipient in ipairs(names) do
+        local first = #lines + 1
         local r = RequestOf(recipient)
         local steps, short = Plan(recipient)
         steps = steps or {}
@@ -2118,7 +2522,8 @@ local function MiniLines()
         local total = #sent + #steps + (#own > 0 and 1 or 0) + (collect and 1 or 0) + (#buy > 0 and 1 or 0) + (#makes > 0 and 1 or 0)
         do
             lines[#lines + 1] = { head = true, text = total > 0 and ("For %s  |cff9e9ea8step %d of %d|r"):format(
-                NameOf(recipient), math.min(#sent + 1, total), total) or ("For " .. NameOf(recipient)) }
+                NameOf(recipient), math.min(#sent + 1, total), total) or ("For " .. NameOf(recipient)),
+                prog = total > 1 and { done = #sent, total = total } or nil }
             for _, alt in ipairs(sent) do
                 lines[#lines + 1] = { text = ("%s %s  |cff9e9ea8sent %d|r"):format(TICK, NameOf(alt), Sum(r.done[alt])) }
             end
@@ -2127,7 +2532,8 @@ local function MiniLines()
             if #own > 0 then
                 n = n + 1
                 local mineStep = recipient == me
-                lines[#lines + 1] = { now = true, gap = true, text = ("%d. %s  |cff9e9ea8bank run|r"):format(n,
+                lines[#lines + 1] = { now = true, gap = true, what = mineStep and "your bank run" or ("bank run on " .. NameOf(recipient)),
+                    text = ("%d. %s  |cff9e9ea8bank run|r"):format(n,
                     mineStep and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
                 local fromBank = 0
                 for _, e in ipairs(own) do
@@ -2163,7 +2569,9 @@ local function MiniLines()
                     inBank, inMail = inBank + (e.bank or 0), inMail + (e.mail or 0)
                 end
                 local where = not mineStep and Alts.WhereText(s.alt)
-                lines[#lines + 1] = { now = now, gap = true, text = ("%d. %s%s"):format(n,
+                lines[#lines + 1] = { now = now, gap = true, mine = mineStep and recipient ~= me,
+                    what = mineStep and "send from this character" or ("log in on " .. NameOf(s.alt)),
+                    text = ("%d. %s%s"):format(n,
                     mineStep and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(s.alt)),
                     where and ("  |cff9e9ea8" .. where .. (s.town and "" or " - no bank here") .. "|r") or "") }
                 PlaceRows(lines, s.items, "bank", "in the bank", now)
@@ -2181,7 +2589,7 @@ local function MiniLines()
                     count, count == 1 and "" or "s", NameOf(recipient)) }
             end
             if collect then
-                lines[#lines + 1] = { now = #steps == 0, gap = true, text = ("%d. %s"):format(n + 1,
+                lines[#lines + 1] = { now = #steps == 0, gap = true, what = "collect the mail", text = ("%d. %s"):format(n + 1,
                     recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
                 lines[#lines + 1] = { sub = true, now = #steps == 0, auto = "mail", text = "|cffffffffMailbox:|r collect the mail" }
             end
@@ -2191,9 +2599,9 @@ local function MiniLines()
                 n = n + 1
                 local mineStep = recipient == me
                 local bags, bank, mail = Holdings(recipient)
-                lines[#lines + 1] = { now = true, gap = true, text = ("%d. %s  |cff9e9ea8auction house|r"):format(n,
+                lines[#lines + 1] = { now = true, gap = true, what = "buy at the auction house", text = ("%d. %s  |cff9e9ea8auction house|r"):format(n,
                     mineStep and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
-                local cost, priced = 0, 0
+                local cost, priced, priceFrom = 0, 0, nil
                 for i, b in ipairs(buy) do
                     if i > 6 then
                         lines[#lines + 1] = { sub = true, text = ("and %d more - see Details"):format(#buy - 6) }
@@ -2202,7 +2610,8 @@ local function MiniLines()
                     local e = r.items[b.id]
                     local have = (bags[b.id] or 0) + (bank[b.id] or 0) + (mail[b.id] or 0)
                     local got = e and e.base and math.max(0, have - e.base) or 0
-                    local price = JQ.CostToBuy and JQ.CostToBuy(b.id, b.n)
+                    local price, _, src, age = CostToBuy(b.id, b.n)
+                    if src then priceFrom = FromScan(src, age) end
                     if price then cost, priced = cost + price, priced + 1 end
                     lines[#lines + 1] = { sub = true, now = true, item = b.id, text = ItemText(b.id, b.n),
                         tag = got > 0 and ("|cff59d959bought %d|r"):format(math.min(got, b.n))
@@ -2211,19 +2620,25 @@ local function MiniLines()
                 local api = ShoppingListAPI() ~= nil
                 lines[#lines + 1] = { sub = true, now = true, text = ("|cffffffffAuction house:|r buy %s%s"):format(
                     #buy == 1 and "it" or "them",
-                    (priced > 0 and ("  |cff9e9ea8about %s|r"):format(Money(cost)) or "")
+                    (priced > 0 and ("  |cff9e9ea8about %s%s|r"):format(Money(cost), priceFrom and (" (" .. priceFrom .. ")") or "") or "")
                     .. (api and (mineStep and "  |cff9e9ea8(press Shopping list there)|r" or "") or "  |cff9e9ea8(or farm it)|r")) }
             end
             -- last: what the requester makes itself once the materials are in its bags
             if #makes > 0 then
                 local ready = #steps == 0 and #own == 0 and #buy == 0
-                lines[#lines + 1] = { now = ready, gap = true, text = ("%d. %s  |cff9e9ea8make|r"):format(n + 1,
+                lines[#lines + 1] = { now = ready, gap = true, what = "make it", text = ("%d. %s  |cff9e9ea8make|r"):format(n + 1,
                     recipient == me and "|cffffd25aThis character|r" or ("Log in on " .. NameOf(recipient))) }
                 local bags, bank, mail = Holdings(recipient)
-                for _, m in ipairs(makes) do
+                local nextUp = recipient == me and NextMake(me) or nil
+                for mi, m in ipairs(makes) do
                     local rec = MakeRecipe(m.id, recipient)
-                    lines[#lines + 1] = { sub = true, now = ready, item = m.id, text = ItemText(m.id, m.n),
-                        tag = recipient == me and "click to make" or "make", make = recipient == me and m or nil }
+                    local word = (nextUp and nextUp.id == m.id and ("|cff%snext: click|r"):format(UI.AccentHex()))
+                        or (m.after and ("|cff9e9ea8after %s|r"):format(ItemName(m.after)))
+                        or (recipient == me and "click to make" or "make")
+                    lines[#lines + 1] = { sub = true, now = ready, item = m.id, text = ("%d. %s"):format(mi, ItemText(m.id, m.n)),
+                        tag = (m.goal and "|cffffd25athe goal|r  " or "") .. word,
+                        make = recipient == me and m or nil,
+                        prog = (m.total or 0) > m.n and { done = m.total - m.n, total = m.total } or nil }
                     -- what it's made from, each with what's on hand (bags, then bank / mail)
                     local crafts = rec and math.ceil(m.n / math.max(1, rec.n or 1)) or 0
                     local ids = {}
@@ -2241,6 +2656,7 @@ local function MiniLines()
                 end
             end
         end
+        MarkCurrent(lines, first)
     end
     return lines
 end
@@ -2303,7 +2719,7 @@ local function AutoCheck(row)
     c.label:SetPoint("RIGHT", c.box, "LEFT", -4, 0)
     c.label:SetText("auto")
     c:SetScript("OnClick", function(self)
-        db.auto[self.kind] = (not db.auto[self.kind]) or nil
+        db.auto[self.kind] = not AutoOn(self.kind)
         QueueMini()
     end)
     c:SetScript("OnEnter", function(self)
@@ -2336,8 +2752,10 @@ local function BuildMini()
             -- (that window has its own heading and close button)
             if self.title then self.title:Hide() end
             if self.close then self.close:Hide() end
+            if self.compactBtn then self.compactBtn:Hide() end
             return
         end
+        if self.compactBtn then self.compactBtn:Show() end
         if self.title then self.title:Show() end
         if self.close then self.close:Show() end
         self:SetParent(UIParent)
@@ -2370,6 +2788,23 @@ local function BuildMini()
     close:SetPoint("TOPRIGHT", -5, -5)
     close.text:ClearAllPoints()   -- the usual side padding leaves no room for the x
     close.text:SetPoint("CENTER")
+    -- compact: just the step to do now
+    mini.compactBtn = UI.Button(mini, db.mini.compact and "+" or "-", 18, 18)
+    mini.compactBtn:SetPoint("RIGHT", close, "LEFT", -3, 0)
+    mini.compactBtn.text:ClearAllPoints()
+    mini.compactBtn.text:SetPoint("CENTER")
+    mini.compactBtn:SetScript("OnClick", function(self)
+        db.mini.compact = not db.mini.compact or nil
+        self.text:SetText(db.mini.compact and "+" or "-")
+        QueueMini()
+    end)
+    mini.compactBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(db.mini.compact and "Show every step" or "Just the step to do now", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    mini.compactBtn:SetScript("OnLeave", UI.HideTip)
+    if dockHost then mini.compactBtn:Hide() end
     close:SetScript("OnClick", function()
         miniHidden = true
         mini:Hide()
@@ -2399,6 +2834,22 @@ local function RefreshMini()
     local show = db and Alts and Alts.MyName() and JQ.IsEnabled(KEY) and next(RealmRequests()) ~= nil
         and (dockHost ~= nil or (not miniHidden and JQ.IsEnabled(MINI_KEY)))
     local lines = show and MiniLines() or {}
+    -- compact (floating only): each plan's heading and the step to do now
+    if db.mini and db.mini.compact and not dockHost and #lines > 0 then
+        local out, inCur = {}, false
+        for _, d in ipairs(lines) do
+            if d.head then
+                out[#out + 1] = d
+                inCur = false
+            elseif d.gap then
+                inCur = d.cur and true or false
+                if inCur then out[#out + 1] = d end
+            elseif inCur then
+                out[#out + 1] = d
+            end
+        end
+        lines = out
+    end
     if #lines == 0 then
         if mini then mini:Hide() end
         return
@@ -2457,13 +2908,14 @@ local function RefreshMini()
             row:SetScript("OnLeave", UI.HideTip)
             row:SetScript("OnMouseDown", function(self, button)
                 if self.make and button == "LeftButton" and not IsModifiedClick("CHATLINK") then
-                    JQ.Try("request plan popout: make", MakePrepare, self.make.id)
+                    local nx = NextMake(Alts.MyName())
+                    JQ.Try("request plan popout: make", MakePrepare, (nx or self.make).id)
                 end
             end)
             row:SetScript("OnClick", function(self)
                 -- a "make" row crafts; any other item row links the item with shift
                 if self.make and not IsModifiedClick("CHATLINK") then
-                    JQ.Try("request plan popout: make", MakeNow, self.make.id, self.make.n)
+                    JQ.Try("request plan popout: make", StartChain, self.make)
                 else
                     UI.ItemClick(self)
                 end
@@ -2491,8 +2943,12 @@ local function RefreshMini()
             row.tag:SetText(d.tag or "")
             row.tag:Show()
             row.text:SetWordWrap(false)
-            row.text:SetPoint("LEFT", 20, 0)
+            row.text:SetPoint("TOPLEFT", 20, -2)
             row.text:SetPoint("RIGHT", row.tag, "LEFT", -6, 0)
+            row.icon:ClearAllPoints()
+            row.icon:SetPoint("TOPLEFT", 1, -1)
+            row.tag:ClearAllPoints()
+            row.tag:SetPoint("TOPRIGHT", -2, -2)
             row.text:SetText(d.text)
             row:EnableMouse(true)
             h = 17
@@ -2509,7 +2965,7 @@ local function RefreshMini()
         if d.auto then
             row.check = row.check or AutoCheck(row)
             row.check.kind = d.auto
-            row.check.tick:SetShown(db.auto[d.auto] and true or false)
+            row.check.tick:SetShown(AutoOn(d.auto))
             row.check:Show()
         elseif row.check then
             row.check:Hide()
@@ -2519,7 +2975,50 @@ local function RefreshMini()
         else
             row.text:SetTextColor(UI.MUTED[1], UI.MUTED[2], UI.MUTED[3])
         end
-        row:SetAlpha((d.item and not d.now) and 0.7 or 1)
+        -- the step to do now: an accent stripe at its left and a tinted band behind it
+        if d.cur and not row.curBar then
+            local ar, ag, ab = UI.Accent()
+            row.curBar = row:CreateTexture(nil, "BACKGROUND")
+            row.curBar:SetColorTexture(ar, ag, ab, 0.95)
+            row.curBar:SetPoint("TOPLEFT", -7, 1)
+            row.curBar:SetPoint("BOTTOMLEFT", -7, -1)
+            row.curBar:SetWidth(3)
+            row.curBg = row:CreateTexture(nil, "BACKGROUND")
+            row.curBg:SetColorTexture(ar, ag, ab, 0.14)
+            row.curBg:SetPoint("TOPLEFT", -4, 1)
+            row.curBg:SetPoint("BOTTOMRIGHT", 2, -1)
+        end
+        if row.curBar then
+            row.curBar:SetShown(d.cur and true or false)
+            row.curBg:SetShown(d.cur and true or false)
+        end
+        row:SetAlpha((d.item and not d.now) and 0.6 or ((d.gap and not d.now) and 0.6 or 1))
+        -- progress: a thin bar under the row (made so far, steps done)
+        if d.prog and d.prog.total > 0 then
+            if not row.bar then
+                row.barBg = row:CreateTexture(nil, "ARTWORK")
+                row.barBg:SetColorTexture(1, 1, 1, 0.10)
+                row.barBg:SetHeight(3)
+                row.bar = row:CreateTexture(nil, "OVERLAY")
+                row.bar:SetHeight(3)
+            end
+            local ar, ag, ab = UI.Accent()
+            row.bar:SetColorTexture(ar, ag, ab, 0.9)
+            h = h + 5
+            row.barBg:ClearAllPoints()
+            row.barBg:SetPoint("BOTTOMLEFT", d.item and 20 or 0, 0)
+            row.barBg:SetPoint("BOTTOMRIGHT", 0, 0)
+            local frac = math.max(0, math.min(1, d.prog.done / d.prog.total))
+            local width = (w - (d.item and 20 or 0)) * frac
+            row.bar:ClearAllPoints()
+            row.bar:SetPoint("BOTTOMLEFT", row.barBg, "BOTTOMLEFT")
+            row.bar:SetWidth(math.max(0.01, width))
+            row.bar:SetShown(frac > 0)
+            row.barBg:Show()
+        elseif row.bar then
+            row.bar:Hide()
+            row.barBg:Hide()
+        end
         row:SetHeight(h)
         row:Show()
         y = y + h + 2
@@ -2549,9 +3048,11 @@ local function RefreshMini()
             table.insert(cands, 1, { "Shopping list", function() MakeShoppingList(order, toBuy) end, true })
         end
     end
-    local toMake = MakeLeft(Alts.MyName())[1]
+    local toMake = NextMake(Alts.MyName())
     if toMake then
-        cands[#cands + 1] = { ("Make %d"):format(toMake.n), function() MakeNow(toMake.id, toMake.n) end, true,
+        local name = ItemName(toMake.id)
+        if #name > 16 then name = name:sub(1, 15) .. "." end
+        cands[#cands + 1] = { ("Make %d %s"):format(toMake.n, name), function() StartChain() end, true,
             function() MakePrepare(toMake.id) end }
     end
     if #cands == 0 and req and not next(req.items) then
@@ -2669,17 +3170,20 @@ local function Reagents()
 end
 
 -- What this character has (bags live + recorded bank + incoming mail) and what alts can give.
-local function HaveAndAlts(id)
+-- What who (this character by default) has of id, and what the others of its
+-- faction can give it.
+local function HaveAndAlts(id, who)
     local me = Alts.MyName()
-    local data = Alts.RealmTable()[me] or {}
-    local bags, bank = Holdings(me)
+    who = who or me
+    local data = Alts.RealmTable()[who] or {}
+    local bags, bank = Holdings(who)
     local have = (bags[id] or 0) + (bank[id] or 0) + ((data.mail or {})[id] or 0)
     local alts = 0
-    local faction = UnitFactionGroup("player")
+    local faction = who == me and UnitFactionGroup("player") or data.faction
     for name, d in pairs(Alts.RealmTable()) do
-        if name ~= me and (not d.faction or d.faction == faction) then
+        if name ~= who and (not faction or not d.faction or d.faction == faction) then
             local b, k, m = Holdings(name)
-            alts = alts + math.max(0, (b[id] or 0) + (k[id] or 0) + (m[id] or 0) - Keep(id))
+            alts = alts + math.max(0, (b[id] or 0) + (k[id] or 0) + (m[id] or 0) - Keep(id) - QuestKeep(name, id))
         end
     end
     return have, alts
@@ -2789,14 +3293,38 @@ end
 -- from a vendor, and - when nobody has enough of something you can make - the
 -- crafts and their own reagents (up to three levels down).
 -- rows: { id, need, have, alts, depth, kind = ok|alts|vendor|make|missing, make }
-local function Breakdown(list, crafts)
+-- Is making still the cheaper way (the "only when cheaper" switch)? Buying it
+-- made against buying what it's made from, by the last scan; no price: make.
+local function CheaperToMake(id, qty, rec)
+    if not JQ.IsEnabled(CHEAP_KEY) then return true end
+    local buy = CostToBuy(id, qty)
+    if not buy then return true end
+    local makes = math.ceil(qty / math.max(1, rec.n or 1))
+    local cost = 0
+    for rid, q in pairs(rec.r) do
+        if not IsVendor(rid) then
+            local c = CostToBuy(rid, q * makes)
+            if not c then return true end
+            cost = cost + c
+        end
+    end
+    return cost < buy
+end
+
+-- opts = { who = the character it's for (this one), preHave / preAlts = {[id] = n}
+-- what other plans already count on from its own stock / from the alts }.
+-- Also returns usedHave: what this plan counts on from who's stock (pre included).
+local function Breakdown(list, crafts, opts)
+    opts = opts or {}
     local rows, request = {}, {}
     local tot = { request = 0, vendor = 0, still = 0 }
     local usedHave, usedAlts = {}, {}
+    for id, n in pairs(opts.preHave or {}) do usedHave[id] = n end
+    for id, n in pairs(opts.preAlts or {}) do usedAlts[id] = n end
     local idx = Index()
-    local me = Alts.MyName()
+    local me = opts.who or Alts.MyName()
     local function walk(id, need, depth, seen)
-        local haveAll, altsAll = HaveAndAlts(id)
+        local haveAll, altsAll = HaveAndAlts(id, me)
         local row = { id = id, need = need, have = haveAll, alts = altsAll, depth = depth }
         rows[#rows + 1] = row
         local have = math.max(0, haveAll - (usedHave[id] or 0))
@@ -2821,7 +3349,7 @@ local function Breakdown(list, crafts)
             local known, can = MakeRecipe(id, me)
             if known and can then rec = { n = known.n, r = known.r, by = { [me] = true } } end
         end
-        if rec and rec.r and depth < 3 and not seen[id] then
+        if rec and rec.r and depth < 3 and not seen[id] and MakeAllowed(id) and CheaperToMake(id, still, rec) then
             local makes = math.ceil(still / (rec.n or 1))
             row.kind, row.make, row.makeQty = "make", makes, still
             row.maker = rec.by and (rec.by[me] and "you" or next(rec.by)) or nil
@@ -2837,7 +3365,7 @@ local function Breakdown(list, crafts)
     end
     for _, e in ipairs(list or {}) do walk(e.id, e.per * crafts, 0, {}) end
     for _, n in pairs(request) do tot.request = tot.request + n end
-    return rows, request, tot
+    return rows, request, tot, usedHave
 end
 
 local function BuildSide(parent)
@@ -3057,11 +3585,75 @@ end
 local profHooked, mailHooked = false, false
 local function HasJobs() return #MyJobs() > 0 end
 
+-- At the auction house: remember the buy list; on leaving, say what of it was
+-- bought and what's still to buy (the plan drops what's bought by itself).
+local questQueued, ahBefore = false, nil
+
+-- "You won an auction for Mithril Ore (x7)": it's in the mailbox now. Put it in
+-- this character's recorded mail, so the plan counts it as bought straight away.
+local WON = ERR_AUCTION_WON_S and ("^" .. ERR_AUCTION_WON_S:gsub("([%(%)%.%-%+%*%?%[%]%^%$])", "%%%1"):gsub("%%s", "(.+)") .. "$") or nil
+local function IDForName(name)
+    local lower = name:lower()
+    local me = Alts.MyName()
+    local toBuy = BuyList(me)
+    for id in pairs(toBuy or {}) do
+        if ItemName(id):lower() == lower then return id end
+    end
+    local id = NameIndex()[lower]
+    if id then return id end
+    local ok, _, link = pcall(ItemInfoFn, name)
+    return ok and link and tonumber(link:match("item:(%d+)")) or nil
+end
+local function AuctionWon(msg)
+    if not (WON and type(msg) == "string") then return end
+    local what = msg:match(WON)
+    if not what then return end
+    local n = tonumber(what:match("%(x(%d+)%)%s*$")) or 1
+    local name = what:gsub("%s*%(x%d+%)%s*$", "")
+    local id = IDForName(name)
+    if not id then return end
+    Alts.AddMail(Alts.MyName(), { [id] = n })
+    QueueMini()
+    if win and win:IsShown() then win:Refresh() end
+end
+local function AHOpened()
+    local me = Alts.MyName()
+    local toBuy = BuyList(me)
+    ahBefore = nil
+    if not next(toBuy or {}) then return end
+    local bags, bank, mail = Holdings(me)
+    ahBefore = {}
+    for id, n in pairs(toBuy) do
+        ahBefore[id] = { n = n, had = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0) }
+    end
+end
+
+local function AHClosed()
+    local before = ahBefore
+    ahBefore = nil
+    if not before then return end
+    local me = Alts.MyName()
+    local bags, bank, mail = Holdings(me)
+    local got, still = {}, {}
+    for id, b in pairs(before) do
+        local now = (bags[id] or 0) + (bank[id] or 0) + (mail[id] or 0)
+        local bought = math.max(0, now - b.had)
+        if bought > 0 then got[#got + 1] = ItemText(id, math.min(bought, b.n)) end
+        if bought < b.n then still[#still + 1] = ItemText(id, b.n - bought) end
+    end
+    if #got == 0 and #still == 0 then return end
+    table.sort(got); table.sort(still)
+    JQ.Print((#got > 0 and ("Bought for the plan: %s. "):format(table.concat(got, ", ")) or "Nothing from the buy list was bought. ")
+        .. (#still > 0 and ("Still to buy: %s."):format(table.concat(still, ", ")) or "The buy list is done."))
+    QueueMini()
+end
+
 ev:SetScript("OnEvent", function(_, event, ...)
     if not JQ.IsEnabled(KEY) then return end
     if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED"
         or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
         if making then JQ.Try("crafting progress bar", CastEvent, event, ...) end
+        if chain and ... == "player" then JQ.Try("craft order", ChainEvent, event) end
         return
     end
     if MINI_EVENTS[event] then QueueMini() end
@@ -3136,18 +3728,44 @@ ev:SetScript("OnEvent", function(_, event, ...)
         if job then ClearSendMail(); FinishSend("The mail failed: stopped.") end
     elseif event == "PLAYER_REGEN_ENABLED" then
         JQ.Try("requests: fill crate button", SyncFill)
+    elseif event == "QUEST_LOG_UPDATE" then
+        -- (many arrive together)
+        if not questQueued then
+            questQueued = true
+            C_Timer.After(1, function()
+                questQueued = false
+                JQ.Try("requests: recording quest items", RecordQuests)
+                if win and win:IsShown() then win:Refresh() end
+            end)
+        end
+    elseif event == "CHAT_MSG_SYSTEM" then
+        JQ.Try("requests: auction won", AuctionWon, ...)
+    elseif event == "AUCTION_HOUSE_SHOW" then
+        JQ.Try("requests: buy list at the auction house", AHOpened)
+    elseif event == "AUCTION_HOUSE_CLOSED" then
+        C_Timer.After(0.5, function() JQ.Try("requests: what you bought", AHClosed) end)
     elseif event == "PLAYER_LOGIN" then
         for recipient in pairs(RealmRequests()) do Tidy(recipient) end
+        C_Timer.After(2, function() JQ.Try("requests: recording quest items", RecordQuests) end)
         C_Timer.After(3, function()
             local jobs = MyJobs()
             if #jobs == 0 then return end
             for _, j in ipairs(jobs) do
-                local n, bank = 0, false
-                for _, e in pairs(j.items) do n = n + (e.bags or 0) + (e.bank or 0) + (e.mail or 0); if (e.bank or 0) > 0 then bank = true end end
-                local line = ("Job: send %d item(s) to %s%s"):format(
-                    n, Alts.Display(j.to), bank and " (some are in your bank)" or "")
-                if not line:find("%.$") then line = line .. "." end
-                JQ.Print(line .. " The Requests tab has the list.")
+                local n, bank, names = 0, false, {}
+                for id, e in pairs(j.items) do
+                    local k = (e.bags or 0) + (e.bank or 0) + (e.mail or 0)
+                    n = n + k
+                    if (e.bank or 0) > 0 then bank = true end
+                    names[#names + 1] = ItemText(id, k)
+                end
+                table.sort(names)
+                local list = #names > 3 and (table.concat(names, ", ", 1, 3) .. (" and %d more"):format(#names - 3)) or table.concat(names, ", ")
+                JQ.Print(("Job for %s: send %s to %s%s. The plan has the steps."):format(
+                    Alts.Display(Alts.MyName()), list, Alts.Display(j.to), bank and " (some are in your bank: take them out first)" or ""))
+                -- on screen too, so it isn't lost in chat
+                if UIErrorsFrame and UIErrorsFrame.AddMessage then
+                    UIErrorsFrame:AddMessage(("JaseTools: send %d item(s) to %s"):format(n, Alts.Display(j.to)), 0.05, 0.82, 0.62)
+                end
             end
             -- the plan popout shows the job; without it, open the Requests tab
             -- straight away (not in combat, not over another JaseTools tab)
@@ -3227,7 +3845,7 @@ JQ.byKey[KEY].onLoad = function()
         "CRAFT_SHOW", "CRAFT_CLOSE", "CRAFT_UPDATE", "MAIL_SHOW", "MAIL_CLOSED", "MAIL_INBOX_UPDATE", "MAIL_SEND_SUCCESS", "MAIL_FAILED",
         "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED",
         "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED", "PLAYER_INTERACTION_MANAGER_FRAME_SHOW",
-        "PLAYER_INTERACTION_MANAGER_FRAME_HIDE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED" }) do
+        "PLAYER_INTERACTION_MANAGER_FRAME_HIDE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "QUEST_LOG_UPDATE", "CHAT_MSG_SYSTEM" }) do
         pcall(ev.RegisterEvent, ev, e)
     end
     Alts.OnChange(function()
@@ -3244,61 +3862,144 @@ JQ.byKey[KEY].onDisable = function()
 end
 JQ.byKey[BAR_KEY].onDisable = function() StopMaking() end
 
+-- What a character's other plans already count on: from its own stock
+-- (r.uses) and from the alts (r.plans). except = the plan being made again.
+local function PreUsed(who, except)
+    local preHave, preAlts = {}, {}
+    local r = who and RequestOf(who)
+    for label, u in pairs((r and r.uses) or {}) do
+        if label ~= except then
+            for id, n in pairs(u) do preHave[id] = (preHave[id] or 0) + n end
+        end
+    end
+    for label, p in pairs((r and r.plans) or {}) do
+        if label ~= except then
+            for id, n in pairs(p) do preAlts[id] = (preAlts[id] or 0) + n end
+        end
+    end
+    return preHave, preAlts
+end
+
+-- Take a plan's part back out of its character's request (planning it again).
+-- Returns true when it was there.
+local function TakeOut(r, label)
+    if not r then return false end
+    for id, n in pairs((r.plans and r.plans[label]) or {}) do
+        local e = r.items[id]
+        if e then e.need = math.max(e.sent or 0, (e.need or 0) - n) end
+    end
+    if r.plans then r.plans[label] = nil end
+    if r.uses then r.uses[label] = nil end
+    for id, m in pairs(r.make or {}) do
+        if m.goal == label then
+            r.make[id] = nil
+        elseif m.by and m.by[label] then
+            m.n = (m.n or 0) - m.by[label]
+            m.by[label] = nil
+            if m.n <= 0 then r.make[id] = nil end
+        end
+    end
+    for id, o in pairs(r.own or {}) do
+        if o.by and o.by[label] then
+            o.n = (o.n or 0) - o.by[label]
+            o.by[label] = nil
+            if o.n <= 0 then r.own[id] = nil end
+        end
+    end
+    local again = false
+    for i = #(r.recipes or {}), 1, -1 do
+        if r.recipes[i] == label then
+            table.remove(r.recipes, i)
+            again = true
+        end
+    end
+    return again
+end
+
+-- What no alt has, for a character other than this one (its crates aren't known here).
+local function ShortList(who)
+    local toBuy, order = {}, {}
+    local _, short = Plan(who)
+    for id, n in pairs(short or {}) do
+        if not IsVendor(id) then
+            toBuy[id] = n
+            order[#order + 1] = id
+        end
+    end
+    table.sort(order, function(a, b) return ItemName(a) < ItemName(b) end)
+    return toBuy, order
+end
+
 -- Plan the materials of N crafts of something: the bank run, the request to
 -- alts, what to make, and the buy list (an Auctionator shopping list when
 -- Auctionator is there). Planning the same label again takes the earlier plan's
--- asks back out first, so nothing doubles. list = { {id, per}, ... }.
-local function PlanFor(label, list, crafts, title)
+-- asks back out first, so nothing doubles; other plans of the same character
+-- add up (what one counts on, the next doesn't count again). list = { {id, per}, ... }.
+-- goal = { id = the item made, n = how many } (optional): the craft itself stays
+-- on the plan as its last step until that many have been made.
+-- who = the character it's for (this one by default): its alts send to it.
+function PlanFor(label, list, crafts, title, goal, who)
     local me = Alts and Alts.MyName()
     if not (me and label) then return false end
+    who = who or me
     title = title or label
-    local mine = RequestOf(me)
-    local again = false
-    if mine then
-        for id, n in pairs((mine.plans and mine.plans[label]) or {}) do
-            local e = mine.items[id]
-            if e then e.need = math.max(e.sent or 0, (e.need or 0) - n) end
+    local whose = who ~= me and (" (for " .. Alts.Display(who) .. ")") or ""
+    local again = TakeOut(RequestOf(who), label)
+    local preHave, preAlts = PreUsed(who, label)
+    local rows, request, tot, used = Breakdown(list, crafts or 1, { who = who, preHave = preHave, preAlts = preAlts })
+    local own, made = PlanOwn(who, rows, preHave, label)
+    -- (before AddRequest: its tidy-up keeps a plan only while it has something left)
+    AddGoal(who, goal, label)
+    local function remember()
+        local r = RequestOf(who)
+        if not r then return end
+        local u = {}
+        for id, n in pairs(used or {}) do
+            local mineN = n - (preHave[id] or 0)
+            if mineN > 0 then u[id] = mineN end
         end
-        if mine.plans then mine.plans[label] = nil end
-        for i = #(mine.recipes or {}), 1, -1 do
-            if mine.recipes[i] == label then
-                table.remove(mine.recipes, i)
-                again = true
-            end
+        if next(u) then
+            r.uses = r.uses or {}
+            r.uses[label] = u
         end
-    end
-    local rows, request, tot = Breakdown(list, crafts or 1)
-    local own, made = PlanOwn(me, rows)
-    if not next(request) and own == 0 and made == 0 then
-        if again then AddRequest(me, {}, nil) end   -- tidies away what was taken back out
-        JQ.Print(tot.vendor > 0 and ("Nothing to plan for %s: the rest is sold by vendors."):format(title)
-            or ("Nothing to plan for %s: it's all in your bags."):format(title))
-        return false
-    end
-    AddRequest(me, request, label)
-    if next(request) then
-        local r = RequestOf(me)
-        if r then
+        if next(request) then
             r.plans = r.plans or {}
             r.plans[label] = {}
             for id, n in pairs(request) do r.plans[label][id] = n end
         end
     end
+    if not next(request) and own == 0 and made == 0 then
+        if goal and goal.id then
+            AddRequest(who, {}, label)
+            remember()
+            JQ.Print(("Everything for %s%s is on hand: the plan keeps the craft as its step."):format(label, whose))
+            return true
+        end
+        if again then AddRequest(who, {}, nil) end   -- tidies away what was taken back out
+        JQ.Print(tot.vendor > 0 and ("Nothing to plan for %s: the rest is sold by vendors."):format(title)
+            or ("Nothing to plan for %s: it's all in %s bags."):format(title, who == me and "your" or (Alts.Display(who) .. "'s")))
+        return false
+    end
+    AddRequest(who, request, label)
+    remember()
     if again then JQ.Print(("Planned %s again, from what you have now."):format(label)) end
-    if own > 0 then JQ.Print(("Bank run for %s: %d item(s) to take from your own bank or mail."):format(label, own)) end
+    if own > 0 then
+        JQ.Print(("Bank run for %s%s: %d item(s) to take from %s own bank or mail."):format(label, whose, own, who == me and "your" or "its"))
+    end
     if made > 0 then
         local parts = {}
         for _, e in ipairs(rows) do
             if e.kind == "make" and (e.makeQty or 0) > 0 then parts[#parts + 1] = ItemText(e.id, e.makeQty) end
         end
-        JQ.Print("To make yourself: " .. table.concat(parts, ", ") .. ". The plan gathers what they're made from.")
+        JQ.Print("To make" .. (who == me and " yourself" or whose) .. ": " .. table.concat(parts, ", ") .. ". The plan gathers what they're made from.")
     end
     if next(request) then
         local parts = {}
         for id, n in pairs(request) do parts[#parts + 1] = ItemText(id, n) end
-        JQ.Print(("Requested for %s: %s."):format(label, table.concat(parts, ", ")))
+        JQ.Print(("Requested for %s%s: %s."):format(label, whose, table.concat(parts, ", ")))
     end
-    local toBuy, order = BuyList(me)
+    local toBuy, order
+    if who == me then toBuy, order = BuyList(me) else toBuy, order = ShortList(who) end
     if #order > 0 then
         if ShoppingListAPI() then
             MakeShoppingList(order, toBuy)
@@ -3306,6 +4007,108 @@ local function PlanFor(label, list, crafts, title)
             JQ.Print(("%d item(s) are on no alt: the Requests tab lists what to buy."):format(#order))
         end
     end
+    return true
+end
+
+-- A plan in numbers, before it's made: { bank, alts, make, buy, vendor, cost, unpriced, buyList }.
+local function Preview(list, crafts, who, label)
+    who = who or Alts.MyName()
+    local preHave, preAlts = PreUsed(who, label)
+    local rows = Breakdown(list, crafts or 1, { who = who, preHave = preHave, preAlts = preAlts })
+    local bags = Holdings(who)
+    local p = { bank = 0, alts = 0, make = 0, buy = 0, vendor = 0, cost = 0, unpriced = 0, buyList = {} }
+    for _, e in ipairs(rows) do
+        if e.kind == "ok" and (bags[e.id] or 0) < e.need then
+            p.bank = p.bank + 1
+        elseif e.kind == "alts" then
+            p.alts = p.alts + 1
+        elseif e.kind == "make" then
+            p.make = p.make + 1
+        elseif e.kind == "vendor" then
+            p.vendor = p.vendor + 1
+        elseif e.kind == "missing" then
+            p.buy = p.buy + 1
+            p.buyList[#p.buyList + 1] = ItemText(e.id, e.buyQty or 0)
+            local c = CostToBuy(e.id, e.buyQty or 0)
+            if c then p.cost = p.cost + c else p.unpriced = p.unpriced + 1 end
+        end
+    end
+    return p
+end
+
+local function PreviewText(label, p, who)
+    local parts = {}
+    if p.bank > 0 then parts[#parts + 1] = ("bank run: %d"):format(p.bank) end
+    if p.alts > 0 then parts[#parts + 1] = ("from alts: %d"):format(p.alts) end
+    if p.make > 0 then parts[#parts + 1] = ("to make: %d"):format(p.make) end
+    if p.vendor > 0 then parts[#parts + 1] = ("vendor: %d"):format(p.vendor) end
+    if p.buy > 0 then
+        parts[#parts + 1] = ("to buy: %d%s"):format(p.buy, p.cost > 0 and (" (about " .. Money(p.cost)
+            .. (p.unpriced > 0 and (", %d without a price"):format(p.unpriced) or "") .. ")") or "")
+    end
+    local text = ("Plan %s%s?\n\n%s"):format(label, (who and who ~= Alts.MyName()) and (" for " .. Alts.Display(who)) or "",
+        #parts > 0 and table.concat(parts, "   ") or "Everything is on hand.")
+    if #p.buyList > 0 then
+        text = text .. "\n\nTo buy: " .. table.concat(p.buyList, ", ", 1, math.min(#p.buyList, 6))
+            .. (#p.buyList > 6 and (" and %d more"):format(#p.buyList - 6) or "")
+    end
+    return text
+end
+
+-- PlanFor, after a box that sums the plan up (unless Confirm plans first is off).
+-- after (optional): run once it's planned.
+function PlanConfirm(label, list, crafts, title, goal, who, after)
+    if not (JQ.IsEnabled(CONFIRM_KEY) and StaticPopup_Show and StaticPopupDialogs) then
+        local ok = PlanFor(label, list, crafts, title, goal, who)
+        if after then pcall(after) end
+        return ok
+    end
+    StaticPopupDialogs.JASEQOL_PLAN_CONFIRM = StaticPopupDialogs.JASEQOL_PLAN_CONFIRM or {
+        text = "%s", button1 = "Plan it", button2 = CANCEL or "Cancel",
+        OnAccept = function(_, data)
+            if not data then return end
+            JQ.Try("plan", PlanFor, data[1], data[2], data[3], data[4], data[5], data[6])
+            if data.after then pcall(data.after) end
+        end,
+        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+    }
+    local p = Preview(list, crafts, who, label)
+    local data = { label, list, crafts, title, goal, who, after = after }
+    StaticPopup_Show("JASEQOL_PLAN_CONFIRM", PreviewText(label, p, who), nil, data)
+    return true
+end
+
+-- Clear plan, with an undo for a little while after.
+local undo   -- { who, data, at }
+local UNDO_SECS = 15
+local function Copy(t)
+    if type(t) ~= "table" then return t end
+    local o = {}
+    for k, v in pairs(t) do o[k] = Copy(v) end
+    return o
+end
+function CancelPlan(msg)
+    local me = Alts.MyName()
+    local r = me and RequestOf(me)
+    if r then undo = { who = me, data = Copy(r), at = GetTime() } end
+    FinishRequest(msg or "Plan cancelled.")
+    if r then
+        JQ.Print(("Cleared by mistake? Undo clear brings it back (for %d seconds)."):format(UNDO_SECS))
+        C_Timer.After(UNDO_SECS + 0.1, function()
+            if win and win:IsShown() then win:Refresh() end
+        end)
+    end
+end
+function CanUndoCancel()
+    return undo ~= nil and undo.who == Alts.MyName() and GetTime() - undo.at <= UNDO_SECS and not RealmRequests()[undo.who]
+end
+function UndoCancel()
+    if not CanUndoCancel() then return false end
+    RealmRequests()[undo.who] = undo.data
+    undo = nil
+    JQ.Print("Plan back, as it was.")
+    if win and win:IsShown() then win:Refresh() end
+    QueueMini(true)
     return true
 end
 
@@ -3327,7 +4130,10 @@ JQ.Requests = {
     end,
     -- this character's own plan: is there one, and drop all of it
     HasPlan = function() local me = Alts and Alts.MyName(); return me ~= nil and RequestOf(me) ~= nil end,
-    Cancel = function() FinishRequest("Plan cancelled.") end,
+    Cancel = function() CancelPlan("Plan cancelled.") end, CanUndoCancel = function() return CanUndoCancel() end,
+    UndoCancel = function() return UndoCancel() end, PlanConfirm = function(...) return PlanConfirm(...) end,
+    -- fn(label, itemID, n) when a plan's craft has been made
+    OnGoalDone = function(fn) goalListeners[#goalListeners + 1] = fn end,
     MakeRecipe = MakeRecipe, IsVendor = function(id) return IsVendor(id) end, Money = Money,
     Dock = function(host) dockHost = host; QueueMini() end,
     Undock = function()
@@ -3340,12 +4146,32 @@ JQ.Requests = {
     end,
     PlanShown = function() return mini ~= nil and mini:IsShown() end, Breakdown = Breakdown, AddRequest = AddRequest, RequestOf = RequestOf, BuyList = BuyList,
     AddOwn = AddOwn, OwnFetch = OwnFetch, Holdings = Holdings, PlanOwn = PlanOwn, MakeLeft = MakeLeft,
-    MakeShoppingList = MakeShoppingList, ShoppingListAPI = ShoppingListAPI, ItemText = ItemText, NameIndex = NameIndex }
+    MakeShoppingList = MakeShoppingList, ShoppingListAPI = ShoppingListAPI, ItemText = ItemText, NameIndex = NameIndex,
+    -- sub-materials: may a plan make this one, and the always-buy list
+    MakeAllowed = MakeAllowed, ToggleBuyOnly = ToggleBuyOnly,
+    BuyOnly = function(id) return db and db.buyOnly and db.buyOnly[id] or false end,
+    -- the craft a plan was made for: how many of it are still to make
+    GoalLeft = GoalLeft,
+    -- what this character's other plans already count on (for an honest preview)
+    PreUsed = function(who) return PreUsed(who or Alts.MyName()) end,
+    -- the characters known to make an item (from their profession windows), this one first
+    Makers = function(id)
+        local known = JaseQoLDB.recipeIndex and JaseQoLDB.recipeIndex[id]
+        local me, out = Alts.MyName(), {}
+        for who in pairs((type(known) == "table" and known.by) or {}) do
+            if who ~= me then out[#out + 1] = who end
+        end
+        table.sort(out)
+        if type(known) == "table" and known.by and known.by[me] then table.insert(out, 1, me) end
+        return out
+    end }
 
 -- for tests
 JQ._AltRequest = { Breakdown = Breakdown, ScanRecipes = ScanRecipes, IsVendor = IsVendor, Plan = Plan, MyJobs = MyJobs, AddRequest = AddRequest, Remaining = Remaining,
     PullFromBank = PullFromBank, StartSend = StartSend, Rows = Rows, FillableCrates = FillableCrates,
     MailWants = MailWants, BankPulls = BankPulls, AutoRun = AutoRun, MakeNow = MakeNow, MakePrepare = MakePrepare,
+    MakeLeft = MakeLeft, GoalLeft = GoalLeft, TidyOwn = TidyOwn, AuctionWon = function(m) return AuctionWon(m) end,
+    NextMake = function(w) return NextMake(w) end, AHOpened = function() return AHOpened() end, AHClosed = function() return AHClosed() end, MiniLines = function() return MiniLines() end, QuestRows = function() return QuestPlanRows() end,
     Making = function() return making end, StartMaking = StartMaking, CastEvent = CastEvent,
     BarFrame = function() return craftBar end,
     ApplyCraftBar = function() ApplyCraftBar() end,

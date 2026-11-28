@@ -19,14 +19,14 @@ local GROUPS = {
     { "Experience", "XP in chat and XP colours", {
         { "xpChat", { "xpBreakdown", "xpMissedRested", "xpMissedFood" } }, "xpLevelColor" } },
     { "Quests", "Quest items and escorts", {
-        "questItemGuard", "questBagCategory", { "escortGuard", { "escortAnnounce" } } } },
+        "questItemGuard", "questBagCategory", "questPlan", { "escortGuard", { "escortAnnounce" } } } },
     { "Dungeon Journal", "The new journal view and its skin", { "djOverhaul", "djSkin" } },
     { "Exploring", "Legacy Challenges and the map", {
         { "exploreWaypoints", { "exploreShowZone", "exploreShowAll" } } } },
     { "Alts, bank & mail", "Alt inventory, Send mats, Requests and crates", {
         { "altTracker", { "altTooltip", "altInventory", "bankMail", "altRequest", "requestMini" } } } },
-    { "Professions", "The one-window professions view, plans and crafting", { "profView", "mcRequest", "craftProgress" } },
-    { "Selling & auction house", "Sell warnings and auction house help", { "boeGuard", "ahCopperWarn" } },
+    { "Professions", "The one-window professions view, plans and crafting", { "profView", "mcRequest", "planConfirm", { "planSubMats", { "planMakeCheaper" } }, "craftProgress" } },
+    { "Selling & auction house", "Sell warnings, auction house help and the craft advisor", { "salesLedger", "boeGuard", "ahCopperWarn" } },
     { "Skins", "EllesmereUI look for other addons", { "mcSkin", "gosSkin" } },
     { "Buttons", "Where to open JaseTools from", { "hubButton", "minimapButton" } },
     { "Troubleshooting", "Error log and debug tools", { "errorNotify", "ahDebug" } },

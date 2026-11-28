@@ -77,6 +77,62 @@ local function Rebuild()
     end
 end
 
+-- Every item objective of the quests in the log, read fresh (whatever this
+-- module's switch): { {quest, questID, name, have, total}, ... }. For plans.
+function JQ.QuestItemObjectives()
+    local out = {}
+    local function add(title, questID, text)
+        local name, have, total = ParseObjective(text)
+        if name and total then
+            out[#out + 1] = { quest = title or "?", questID = questID, name = name, have = have or 0, total = total }
+        end
+    end
+    if C_QuestLog and C_QuestLog.GetNumQuestLogEntries and C_QuestLog.GetQuestObjectives then
+        for i = 1, C_QuestLog.GetNumQuestLogEntries() do
+            local info = C_QuestLog.GetInfo(i)
+            if info and not info.isHeader and info.questID then
+                for _, o in ipairs(C_QuestLog.GetQuestObjectives(info.questID) or {}) do
+                    if o.type == "item" then add(info.title, info.questID, o.text) end
+                end
+            end
+        end
+    elseif GetNumQuestLogEntries and GetQuestLogLeaderBoard then
+        for i = 1, GetNumQuestLogEntries() do
+            local title, _, _, isHeader, _, _, _, questID = GetQuestLogTitle(i)
+            if not isHeader then
+                for j = 1, (GetNumQuestLeaderBoards(i) or 0) do
+                    local text, kind = GetQuestLogLeaderBoard(j, i)
+                    if kind == "item" then add(title, questID or title, text) end
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- {[itemID] = n}: how many of each item this character's quests need (every
+-- quest's full count, collected or not: it all goes at the hand-in). Mail and
+-- plans leave these where they are.
+function JQ.QuestReserve()
+    local out = {}
+    local idx
+    for _, o in ipairs(JQ.QuestItemObjectives()) do
+        local ok, _, link = pcall(GetItemInfoFn, o.name)
+        local id = ok and link and tonumber(link:match("item:(%d+)")) or nil
+        if not id then
+            if not idx then
+                idx = {}
+                for iid, it in pairs(JaseQoLDB.items or {}) do
+                    if type(it) == "table" and type(it.n) == "string" then idx[it.n:lower()] = iid end
+                end
+            end
+            id = idx[o.name:lower()]
+        end
+        if id then out[id] = (out[id] or 0) + o.total end
+    end
+    return out
+end
+
 local function NameOf(item)
     -- only item IDs and links (bag code can pass other things)
     if type(item) ~= "number" and type(item) ~= "string" then return nil end

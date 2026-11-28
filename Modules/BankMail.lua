@@ -161,19 +161,29 @@ local function Assign(id, cat, on)
 end
 
 -- Stacks in my bags for an alt: { {bag, slot, id, count}, ... } (unbound only).
+-- Items a quest in this character's log needs stay here: kept = {[id] = true}.
 local function StacksFor(alt)
-    local out = {}
+    local out, kept = {}, {}
     local boe = GetsBoEGear(alt)
+    local quest = {}
+    if JQ.QuestReserve then
+        local ok, t = pcall(JQ.QuestReserve)
+        if ok and t then quest = t end
+    end
     for _, bag in ipairs(Alts.BagIDs()) do
         local n = (C and C.GetContainerNumSlots and C.GetContainerNumSlots(bag)) or 0
         for slot = 1, n do
             local id, count, isBound, link = Alts.SlotInfo(bag, slot)
             if id and not isBound and (ItemGoesTo(id, alt) or RecipeGoesTo(id, alt) or (boe and IsBoEGear(link))) then
-                out[#out + 1] = { bag = bag, slot = slot, id = id, count = count or 1 }
+                if quest[id] then
+                    kept[id] = true
+                else
+                    out[#out + 1] = { bag = bag, slot = slot, id = id, count = count or 1 }
+                end
             end
         end
     end
-    return out
+    return out, kept
 end
 
 -------------------------------------------------------------------------------
@@ -260,7 +270,13 @@ local function StartSend(alt)
         Status("Clear the attachments already on the Send Mail page first.")
         return
     end
-    local queue = StacksFor(alt)
+    local queue, kept = StacksFor(alt)
+    if next(kept) then
+        local names = {}
+        for id in pairs(kept) do names[#names + 1] = (UI.ItemNameQuality(id)) end
+        table.sort(names)
+        JQ.Print("Kept for your quests, not sent: " .. table.concat(names, ", ") .. ".")
+    end
     if #queue == 0 then Status("Nothing in your bags for " .. Alts.Display(alt)) return end
     if not Alts.HasFullName(alt) then JQ.Try("send mats: learning names", Alts.LearnNames) end
     if not Alts.HasFullName(alt) then
@@ -467,7 +483,9 @@ local function BuildPanel()
             self.send:SetEnabledLook(false)
             return
         end
-        local stacks = StacksFor(db.lastAlt)
+        local stacks, kept = StacksFor(db.lastAlt)
+        local nKept = 0
+        for _ in pairs(kept or {}) do nKept = nKept + 1 end
         local byId, items = {}, {}
         for _, s in ipairs(stacks) do
             local it = byId[s.id]
@@ -483,8 +501,9 @@ local function BuildPanel()
         self.listHead:SetText("In your bags for " .. Alts.Display(db.lastAlt))
         self.list:SetItems(items)
         local mails = math.ceil(#stacks / MAX_ATTACH)
-        self.summary:SetText(#stacks == 0 and "Nothing in your bags for them right now."
+        self.summary:SetText((#stacks == 0 and "Nothing in your bags for them right now."
             or (#stacks .. " stacks  •  " .. mails .. " mail" .. (mails > 1 and "s" or "")))
+            .. (nKept > 0 and ("  •  |cffffd25a%d kept for quests|r"):format(nKept) or ""))
         self.send:SetEnabledLook(#stacks > 0 and not job)
     end
 

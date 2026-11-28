@@ -2,6 +2,31 @@
 
 JaseTools (formerly JaseQoL) is built with AI assistance: written with Claude Code (Anthropic), directed and tested in game by Jase.
 
+## v1.13.0 - 2026-11-29
+
+### New
+- **Market tab: sales ledger and craft advisor** - records every auction you post and what became of it (sold and how long it took, expired, cancelled, the sale mail's money, deposits lost), learns what really sells and recommends what to make for steady gold a day: Make, Test, Stop, Items, Log and Summary views, with a Steady / Balanced / Bold style. `/jmarket` (or `/jsales`). The Professions window can also sort recipes by gold a day.
+- **Plan quest items** - the Requests tab lists the items your quests still need that one of your characters can craft (bars, potions, gear), with a **Plan** button each: bank run, alts, make and buy, as for a recipe. Quest drops are left out.
+- **Plans keep the craft** - a plan made for a recipe or a Mastercraft step keeps the craft itself as its last step ("the goal") until you've made it, instead of disappearing once the materials are in. Picking that recipe again fills in the crafts still to make.
+- **Craft order** - a plan's make steps are numbered in the order they depend on each other (bars, then casings, then the bomb). Steps that wait say what for, the next one says **next: click**, and clicking any of them makes its parts first. When a batch ends the next one starts by itself if the game allows it; otherwise the plan's button names what's next.
+- **Mastercraft guide: click a row** - clicking a row of the guide tab picks that recipe in the middle with the crafts the guide asks for, ready for Make or Plan mats.
+- **Mastercraft guide: Make next, Plan it too and a skill bar** - **Make next** works down the order of work one batch at a click, **Plan it too** adds the next guide step to the same plan, and a bar shows how far your skill is into the step. When a guide step's craft is made, a box offers to plan the next step.
+- **Plans make sub-materials (switch)** - turn off making sub-materials (heavy leather from light, bars from ore) so they go on the buy list instead; **Sub-mats: make / buy** in the Professions window flips it, and right-clicking a material always buys just that one. **Make sub-materials only when cheaper** (off by default) makes them only when that costs less than buying them made.
+- **Confirm plans first** - before a plan is made, a box sums it up: bank run, from alts, to make, vendor and to buy with its gold. Switch it off in Professions.
+- **Plan for another character** - right-click **Plan mats** to plan a recipe for an alt that makes it: its alts (and you) get jobs to send to it.
+- **Undo** - **Clear plan** turns into **Undo clear** for 15 seconds, also in the Requests tab, and **Skip step** can be taken back with **Undo skip**.
+- **Request plan: NOW marker, progress and compact view** - the step you're on has an accent stripe and a **NOW** label, the heading names it, later steps are dimmed, thin bars show steps done and how much of each make step is made, and **-** shrinks the popout to the step you're on.
+- **Buy list by item type** - the Requests tab's buy list is grouped by item type with each price, a total and where the prices came from and how old they are.
+- **Auction house check** - leaving the auction house says what from the buy list you bought and what's still to buy. Auctions you win count as bought straight away (they're in the mail).
+
+### Changed
+- **Quest items are never mailed** - items a quest in your log needs stay in your bags when a plan sends mats or Send mats mails a category, and plans don't ask an alt for items its own quests need.
+- **Plans add up** - planning several things no longer counts the same stock twice: what one plan takes from your bank or alts, the next one doesn't count on again.
+- **Taking the plan's mail out** is automatic by default (untick auto to stop it).
+- **Login reminder** - logging in on an alt with a job lists what to send and to whom, and says it on screen too.
+- **Material rows** in the Professions window show a small icon for where each one comes from (bags, bank, alts, make, buy, vendor).
+- **Plan mats in Mastercraft** goes through the same planner as the Professions window (confirm box, the craft kept as the last step).
+
 ## v1.12.2 - 2026-11-26
 
 ### Fixed
